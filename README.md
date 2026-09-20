@@ -2,6 +2,20 @@
 
 This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 22.1.2.
 
+## Publishing (GitHub Pages)
+
+Every push to `main` runs [.github/workflows/deploy.yml](.github/workflows/deploy.yml): it installs, runs the tests
+(a failing test stops the deploy), builds for the sub-path and publishes to
+**https://meeker-moo.github.io/planner-tracking/**.
+
+One-time setup on GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions**. Then run the workflow
+once (**Actions → Deploy to GitHub Pages → Run workflow**), or just push again.
+
+Who can open it: a GitHub Pages site is reachable by anyone who has the address; GitHub offers no "anyone with the
+link" sign-in for it (organization-only access needs GitHub Enterprise Cloud). The page tells search engines not to
+index it (`noindex`), so it does not show up in results, but the link can be forwarded to anyone. The app keeps its
+data only in each visitor's own browser, so the published site holds no project data.
+
 ## Development server
 
 To start a local development server, run:

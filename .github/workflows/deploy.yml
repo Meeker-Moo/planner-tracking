@@ -1,0 +1,55 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # A failing test stops the deploy.
+      - run: npx ng test --watch=false
+
+      # The site lives at https://<user>.github.io/<repo>/, so the app is built for that sub-path.
+      - run: npx ng build --base-href "/${{ github.event.repository.name }}/"
+
+      # GitHub Pages has no server-side routing: a reload on /<repo>/plans/123 finds no such file and serves
+      # 404.html instead. Making that the app itself lets the Angular router handle the address.
+      - name: Single-page-app fallback
+        run: cp dist/annual-work-planning/browser/index.html dist/annual-work-planning/browser/404.html
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/annual-work-planning/browser
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
