@@ -1,11 +1,16 @@
+export type EventPriority = 'urgent' | 'adhoc' | 'normal' | 'low';
+
 /** An event on the Monthly Report calendar. Independent of projects, but it can point at one. */
 export interface CalendarEvent {
   id: string;
-  date: string; // ISO yyyy-MM-dd
-  startTime: string; // HH:mm
-  endTime: string; // HH:mm
+  startDate: string; // ISO yyyy-MM-dd
+  endDate: string; // ISO yyyy-MM-dd, the same as startDate for a one-day event
   title: string;
   description?: string;
+  /** Missing on events saved before priorities existed; read it with `eventPriority()`. */
+  priority?: EventPriority;
+  /** Marked as done (shown struck through). */
+  done?: boolean;
   /** The project (and activity) this event is linked to. */
   projectId?: string;
   /**

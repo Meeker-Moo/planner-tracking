@@ -1,32 +1,41 @@
 import { ChangeDetectionStrategy, Component, computed, effect, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { CalendarEvent, CalendarEventInput } from '../../core/models/calendar-event.model';
+import { CalendarEvent, CalendarEventInput, EventPriority } from '../../core/models/calendar-event.model';
+import { DEFAULT_EVENT_PRIORITY, EVENT_PRIORITY_LIST } from '../../core/models/status.constant';
 import { WorkPlan } from '../../core/models/work-plan.model';
 import { ThaiDatePicker } from '../../shared/components/thai-date-picker/thai-date-picker';
-import { TimeField } from '../../shared/components/time-field/time-field';
-
-const DEFAULT_START = '09:00';
-const DEFAULT_END = '10:00';
+import { eventDayCount } from './calendar.util';
 
 interface Option {
   id: string;
   label: string;
 }
 
-/** Add or edit one event: when it happens, what it is, and which project / activity it belongs to. */
+/** Add or edit one event: the days it covers, how pressing it is, what it is, and which project / activity it belongs to. */
 @Component({
   selector: 'app-event-form-dialog',
   standalone: true,
-  imports: [FormsModule, ThaiDatePicker, TimeField],
+  imports: [FormsModule, ThaiDatePicker],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (open()) {
-      <div class="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[60] p-4">
-        <div class="w-full max-w-xl max-h-[90vh] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden">
-          <div class="px-6 py-5 border-b border-slate-200 flex items-center justify-between shrink-0">
+      <div class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-60 p-4">
+        <div
+          role="dialog"
+          aria-modal="true"
+          class="w-full max-w-xl max-h-[90vh] bg-white rounded-3xl shadow-2xl ring-1 ring-slate-900/5 flex flex-col overflow-hidden"
+        >
+          <div class="px-6 py-5 border-b border-slate-100 flex items-center justify-between shrink-0">
             <span class="text-lg font-bold text-slate-900">{{ editing() ? 'แก้ไข Event' : 'เพิ่ม Event' }}</span>
-            <button type="button" aria-label="ปิด" class="w-8 h-8 rounded-lg bg-slate-100 text-slate-500 text-base" (click)="cancel.emit()">
-              ×
+            <button
+              type="button"
+              aria-label="ปิด"
+              class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center"
+              (click)="cancel.emit()"
+            >
+              <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M5 5l10 10M15 5L5 15" stroke-linecap="round" />
+              </svg>
             </button>
           </div>
 
@@ -36,27 +45,46 @@ interface Option {
               <input
                 type="text"
                 placeholder="เช่น ประชุมติดตามความคืบหน้า"
-                class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
                 [(ngModel)]="title"
               />
             </label>
 
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div class="flex flex-col gap-1.5">
-                <span class="text-sm font-semibold text-slate-700">วันที่</span>
-                <app-thai-date-picker ariaLabel="วันที่ของ Event" [(value)]="date" />
-              </div>
-              <div class="flex flex-col gap-1.5">
-                <span class="text-sm font-semibold text-slate-700">เวลาเริ่ม</span>
-                <app-time-field ariaLabel="เวลาเริ่ม" [(value)]="startTime" />
-              </div>
-              <div class="flex flex-col gap-1.5">
-                <span class="text-sm font-semibold text-slate-700">เวลาสิ้นสุด</span>
-                <app-time-field ariaLabel="เวลาสิ้นสุด" [invalid]="!!timeError()" [(value)]="endTime" />
+            <div class="flex flex-col gap-1.5">
+              <span id="event-priority-label" class="text-sm font-semibold text-slate-700">ความสำคัญ (Priority)</span>
+              <div role="radiogroup" aria-labelledby="event-priority-label" class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                @for (p of priorities; track p.value) {
+                  <button
+                    type="button"
+                    role="radio"
+                    class="flex items-center justify-center gap-2 rounded-xl border-2 px-3 py-2 text-sm font-semibold transition"
+                    [attr.aria-checked]="priority() === p.value"
+                    [style.border-color]="priority() === p.value ? p.dot : 'transparent'"
+                    [style.background]="priority() === p.value ? p.bg : '#F8FAFC'"
+                    [style.color]="priority() === p.value ? p.text : '#64748B'"
+                    (click)="priority.set(p.value)"
+                  >
+                    <span class="w-2.5 h-2.5 rounded-full" [style.background]="p.dot"></span>
+                    {{ p.label }}
+                  </button>
+                }
               </div>
             </div>
-            @if (timeError()) {
-              <span class="-mt-2 text-xs text-red-600">{{ timeError() }}</span>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div class="flex flex-col gap-1.5">
+                <span class="text-sm font-semibold text-slate-700">วันเริ่มต้น</span>
+                <app-thai-date-picker ariaLabel="วันเริ่มต้นของ Event" [value]="startDate()" (valueChange)="onStartDateChange($event)" />
+              </div>
+              <div class="flex flex-col gap-1.5">
+                <span class="text-sm font-semibold text-slate-700">วันสิ้นสุด</span>
+                <app-thai-date-picker ariaLabel="วันสิ้นสุดของ Event" [(value)]="endDate" />
+              </div>
+            </div>
+            @if (dateError()) {
+              <span class="-mt-2 text-xs text-red-600">{{ dateError() }}</span>
+            } @else if (dayCount() > 1) {
+              <span class="-mt-2 text-xs text-slate-500">รวม {{ dayCount() }} วัน</span>
             }
 
             <label class="flex flex-col gap-1.5">
@@ -64,17 +92,34 @@ interface Option {
               <textarea
                 rows="3"
                 placeholder="รายละเอียดเพิ่มเติม (ถ้ามี)"
-                class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none resize-none focus:border-blue-500"
+                class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none resize-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
                 [(ngModel)]="description"
               ></textarea>
             </label>
 
-            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 flex flex-col gap-3">
+            <button
+              type="button"
+              role="switch"
+              class="flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition"
+              [class]="done() ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-white hover:bg-slate-50'"
+              [attr.aria-checked]="done()"
+              (click)="done.set(!done())"
+            >
+              <span class="relative w-10 h-6 shrink-0 rounded-full transition" [class]="done() ? 'bg-emerald-500' : 'bg-slate-300'">
+                <span class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition" [class.translate-x-4]="done()"></span>
+              </span>
+              <span class="flex flex-col">
+                <span class="text-sm font-semibold text-slate-700">ทำแล้ว</span>
+                <span class="text-xs text-slate-500">Event ที่ทำแล้วจะแสดงเป็นขีดฆ่าบนปฏิทิน</span>
+              </span>
+            </button>
+
+            <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4 flex flex-col gap-3">
               <span class="text-sm font-semibold text-slate-700">เชื่อมโยงกับโครงการ <span class="font-normal text-slate-400">(ไม่บังคับ)</span></span>
               <label class="flex flex-col gap-1.5">
                 <span class="text-xs font-semibold text-slate-500">โครงการ</span>
                 <select
-                  class="bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                  class="bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500"
                   [ngModel]="projectId()"
                   (ngModelChange)="onProjectChange($event)"
                 >
@@ -87,7 +132,7 @@ interface Option {
               <label class="flex flex-col gap-1.5">
                 <span class="text-xs font-semibold text-slate-500">กิจกรรมย่อย</span>
                 <select
-                  class="bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500 disabled:bg-slate-100 disabled:text-slate-400"
+                  class="bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-500 disabled:bg-slate-100 disabled:text-slate-400"
                   [disabled]="!projectId()"
                   [ngModel]="activityId()"
                   (ngModelChange)="activityId.set($event)"
@@ -104,13 +149,17 @@ interface Option {
             </div>
           </div>
 
-          <div class="px-6 py-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
-            <button type="button" class="px-4 py-2.5 rounded-lg border border-slate-200 text-sm font-semibold text-slate-700" (click)="cancel.emit()">
+          <div class="px-6 py-4 border-t border-slate-100 flex justify-end gap-3 shrink-0">
+            <button
+              type="button"
+              class="px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              (click)="cancel.emit()"
+            >
               ยกเลิก
             </button>
             <button
               type="button"
-              class="px-4 py-2.5 rounded-lg bg-blue-600 text-sm font-bold text-white disabled:opacity-40"
+              class="px-4 py-2.5 rounded-xl bg-blue-600 text-sm font-bold text-white shadow-sm shadow-blue-600/30 hover:bg-blue-700 disabled:opacity-40 disabled:shadow-none"
               [disabled]="!canSave()"
               (click)="onSave()"
             >
@@ -134,19 +183,26 @@ export class EventFormDialog {
   save = output<CalendarEventInput>();
   cancel = output<void>();
 
+  readonly priorities = EVENT_PRIORITY_LIST;
+
   title = signal('');
+  priority = signal<EventPriority>(DEFAULT_EVENT_PRIORITY);
+  done = signal(false);
   description = signal('');
-  date = signal('');
-  startTime = signal(DEFAULT_START);
-  endTime = signal(DEFAULT_END);
+  startDate = signal('');
+  endDate = signal('');
   projectId = signal('');
   activityId = signal('');
 
-  timeError = computed(() =>
-    this.startTime() && this.endTime() && this.endTime() < this.startTime() ? 'เวลาสิ้นสุดต้องไม่ก่อนเวลาเริ่ม' : '',
+  dateError = computed(() =>
+    this.startDate() && this.endDate() && this.endDate() < this.startDate() ? 'วันสิ้นสุดต้องไม่ก่อนวันเริ่มต้น' : '',
   );
 
-  canSave = computed(() => !!this.title().trim() && !!this.date() && !!this.startTime() && !!this.endTime() && !this.timeError());
+  dayCount = computed(() =>
+    this.startDate() && this.endDate() ? eventDayCount({ startDate: this.startDate(), endDate: this.endDate() }) : 0,
+  );
+
+  canSave = computed(() => !!this.title().trim() && !!this.startDate() && !!this.endDate() && !this.dateError());
 
   /** Newest fiscal year first. A project that was linked but no longer exists stays selectable so the link is not lost silently. */
   projectOptions = computed<Option[]>(() => {
@@ -177,21 +233,30 @@ export class EventFormDialog {
       if (e) {
         this.title.set(e.title);
         this.description.set(e.description ?? '');
-        this.date.set(e.date);
-        this.startTime.set(e.startTime);
-        this.endTime.set(e.endTime);
+        this.priority.set(e.priority ?? DEFAULT_EVENT_PRIORITY);
+        this.done.set(!!e.done);
+        this.startDate.set(e.startDate);
+        this.endDate.set(e.endDate);
         this.projectId.set(e.projectId ?? '');
         this.activityId.set(e.activityId ?? '');
       } else {
         this.title.set('');
         this.description.set('');
-        this.date.set(this.defaultDate());
-        this.startTime.set(DEFAULT_START);
-        this.endTime.set(DEFAULT_END);
+        this.priority.set(DEFAULT_EVENT_PRIORITY);
+        this.done.set(false);
+        this.startDate.set(this.defaultDate());
+        this.endDate.set(this.defaultDate());
         this.projectId.set('');
         this.activityId.set('');
       }
     });
+  }
+
+  // A one-day event stays one day when its start moves, and the end never ends up before the start.
+  onStartDateChange(iso: string): void {
+    const end = this.endDate();
+    if (!end || end === this.startDate() || end < iso) this.endDate.set(iso);
+    this.startDate.set(iso);
   }
 
   // An activity belongs to one project, so changing the project clears the activity.
@@ -213,11 +278,12 @@ export class EventFormDialog {
     const description = this.description().trim();
 
     this.save.emit({
-      date: this.date(),
-      startTime: this.startTime(),
-      endTime: this.endTime(),
+      startDate: this.startDate(),
+      endDate: this.endDate(),
       title: this.title().trim(),
       description: description || undefined,
+      priority: this.priority(),
+      done: this.done(),
       projectId: projectId || undefined,
       projectName: projectId ? (project?.name ?? (sameProject ? original?.projectName : undefined)) : undefined,
       activityId: activityId || undefined,

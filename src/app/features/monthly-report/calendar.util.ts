@@ -1,5 +1,5 @@
 import { CalendarEvent } from '../../core/models/calendar-event.model';
-import { THAI_MONTHS_FULL } from '../../core/models/status.constant';
+import { eventPriority, EVENT_PRIORITY_LIST, THAI_MONTHS, THAI_MONTHS_FULL } from '../../core/models/status.constant';
 import { daysInMonth, parseIsoDate, toIsoDate } from '../../shared/utils/date.util';
 
 export interface CalendarDay {
@@ -27,20 +27,69 @@ export function buildMonthGrid(year: number, month: number): CalendarDay[][] {
   );
 }
 
-/** Earliest first: by start time, then end time, then title. */
-export function compareEvents(a: CalendarEvent, b: CalendarEvent): number {
-  return a.startTime.localeCompare(b.startTime) || a.endTime.localeCompare(b.endTime) || a.title.localeCompare(b.title, 'th');
+/** The day after `iso`. */
+function nextDay(iso: string): string {
+  const p = parseIsoDate(iso)!;
+  const d = new Date(p.year, p.month, p.day + 1);
+  return toIsoDate(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-/** The events of each day, in time order. */
-export function groupEventsByDate(events: CalendarEvent[]): Map<string, CalendarEvent[]> {
+/** By priority (ด่วน, งานแทรก, ปกติ, ไม่ด่วน), then the earlier start, then title. */
+export function compareEvents(a: CalendarEvent, b: CalendarEvent): number {
+  const rank = (e: CalendarEvent) => EVENT_PRIORITY_LIST.indexOf(eventPriority(e));
+  return rank(a) - rank(b) || a.startDate.localeCompare(b.startDate) || a.title.localeCompare(b.title, 'th');
+}
+
+/** Whether the event covers the day (start and end days included). */
+export function eventCoversDay(event: CalendarEvent, iso: string): boolean {
+  return event.startDate <= iso && iso <= event.endDate;
+}
+
+/** Whether the event covers any day from `from` to `to`. */
+export function eventOverlaps(event: CalendarEvent, from: string, to: string): boolean {
+  return event.startDate <= to && event.endDate >= from;
+}
+
+/** The events of one day, in order. */
+export function eventsOnDay(events: CalendarEvent[], iso: string): CalendarEvent[] {
+  return events.filter((e) => eventCoversDay(e, iso)).sort(compareEvents);
+}
+
+/**
+ * The events of each day from `from` to `to`, in order. An event that spans several days is listed on
+ * each of them; days outside the range are left out so a long event does not fill in months not shown.
+ */
+export function groupEventsByDate(events: CalendarEvent[], from: string, to: string): Map<string, CalendarEvent[]> {
   const byDate = new Map<string, CalendarEvent[]>();
   for (const event of [...events].sort(compareEvents)) {
-    const list = byDate.get(event.date);
-    if (list) list.push(event);
-    else byDate.set(event.date, [event]);
+    if (!eventOverlaps(event, from, to)) continue;
+    const last = event.endDate < to ? event.endDate : to;
+    for (let day = event.startDate > from ? event.startDate : from; day <= last; day = nextDay(day)) {
+      const list = byDate.get(day);
+      if (list) list.push(event);
+      else byDate.set(day, [event]);
+    }
   }
   return byDate;
+}
+
+/** e.g. "24 ก.ย. 69" */
+function formatShort(iso: string): string {
+  const p = parseIsoDate(iso);
+  return p ? `${p.day} ${THAI_MONTHS[p.month]} ${String((p.year + 543) % 100).padStart(2, '0')}` : '';
+}
+
+/** e.g. "24 ก.ย. 69 – 2 ต.ค. 69"; just the one day when the event does not span several. */
+export function formatDateRange(startDate: string, endDate: string): string {
+  return startDate === endDate ? formatShort(startDate) : `${formatShort(startDate)} – ${formatShort(endDate)}`;
+}
+
+/** How many days the event covers, both ends included. */
+export function eventDayCount(event: Pick<CalendarEvent, 'startDate' | 'endDate'>): number {
+  const a = parseIsoDate(event.startDate);
+  const b = parseIsoDate(event.endDate);
+  if (!a || !b) return 1;
+  return Math.round((Date.UTC(b.year, b.month, b.day) - Date.UTC(a.year, a.month, a.day)) / 86_400_000) + 1;
 }
 
 /** e.g. "วันพฤหัสบดีที่ 17 กันยายน 2569" */

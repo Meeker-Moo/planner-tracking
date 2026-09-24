@@ -1,8 +1,16 @@
-import { CalendarEvent } from '../../core/models/calendar-event.model';
-import { buildMonthGrid, compareEvents, formatWeekdayDate, groupEventsByDate } from './calendar.util';
+import { CalendarEvent, EventPriority } from '../../core/models/calendar-event.model';
+import {
+  buildMonthGrid,
+  compareEvents,
+  eventDayCount,
+  eventsOnDay,
+  formatDateRange,
+  formatWeekdayDate,
+  groupEventsByDate,
+} from './calendar.util';
 
-function event(id: string, date: string, startTime: string, endTime = '23:00', title = id): CalendarEvent {
-  return { id, date, startTime, endTime, title, createdAt: '', updatedAt: '' };
+function event(id: string, startDate: string, priority?: EventPriority, endDate = startDate, title = id): CalendarEvent {
+  return { id, startDate, endDate, title, priority, createdAt: '', updatedAt: '' };
 }
 
 describe('buildMonthGrid', () => {
@@ -34,18 +42,59 @@ describe('buildMonthGrid', () => {
 });
 
 describe('events order', () => {
-  it('sorts by start time, then end time, then title', () => {
-    const sorted = [event('c', '2026-09-17', '10:00', '11:00', 'ข'), event('a', '2026-09-17', '09:00'), event('b', '2026-09-17', '10:00', '10:30', 'ก')].sort(
-      compareEvents,
-    );
+  it('sorts ด่วน, งานแทรก, ปกติ, ไม่ด่วน, treating a missing priority as ปกติ', () => {
+    const sorted = [
+      event('low', '2026-09-17', 'low'),
+      event('none', '2026-09-17'),
+      event('adhoc', '2026-09-17', 'adhoc'),
+      event('urgent', '2026-09-17', 'urgent'),
+    ].sort(compareEvents);
+    expect(sorted.map((e) => e.id)).toEqual(['urgent', 'adhoc', 'none', 'low']);
+  });
+
+  it('breaks a tie by the earlier start, then title', () => {
+    const sorted = [
+      event('c', '2026-09-17', 'normal', '2026-09-17', 'ข'),
+      event('b', '2026-09-17', 'normal', '2026-09-17', 'ก'),
+      event('a', '2026-09-15', 'normal'),
+    ].sort(compareEvents);
     expect(sorted.map((e) => e.id)).toEqual(['a', 'b', 'c']);
   });
 
-  it('groups by date with each day in time order', () => {
-    const grouped = groupEventsByDate([event('late', '2026-09-17', '15:00'), event('other', '2026-09-18', '08:00'), event('early', '2026-09-17', '08:00')]);
-    expect(grouped.get('2026-09-17')?.map((e) => e.id)).toEqual(['early', 'late']);
-    expect(grouped.get('2026-09-18')?.map((e) => e.id)).toEqual(['other']);
+  it('groups by date, listing a multi-day event on every day it covers', () => {
+    const grouped = groupEventsByDate(
+      [event('trip', '2026-09-16', 'low', '2026-09-18'), event('fire', '2026-09-17', 'urgent'), event('other', '2026-09-20', 'normal')],
+      '2026-08-30',
+      '2026-10-03',
+    );
+    expect(grouped.get('2026-09-16')?.map((e) => e.id)).toEqual(['trip']);
+    expect(grouped.get('2026-09-17')?.map((e) => e.id)).toEqual(['fire', 'trip']);
+    expect(grouped.get('2026-09-18')?.map((e) => e.id)).toEqual(['trip']);
     expect(grouped.get('2026-09-19')).toBeUndefined();
+    expect(grouped.get('2026-09-20')?.map((e) => e.id)).toEqual(['other']);
+  });
+
+  it('only fills in the days asked for, across a month end', () => {
+    const grouped = groupEventsByDate([event('long', '2026-01-01', 'normal', '2026-12-31')], '2026-09-29', '2026-10-02');
+    expect([...grouped.keys()]).toEqual(['2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02']);
+  });
+
+  it('finds the events of one day', () => {
+    const events = [event('trip', '2026-09-16', 'low', '2026-09-18'), event('fire', '2026-09-17', 'urgent'), event('later', '2026-09-19')];
+    expect(eventsOnDay(events, '2026-09-18').map((e) => e.id)).toEqual(['trip']);
+    expect(eventsOnDay(events, '2026-09-17').map((e) => e.id)).toEqual(['fire', 'trip']);
+  });
+});
+
+describe('date ranges', () => {
+  it('counts the days with both ends included, across a month end', () => {
+    expect(eventDayCount({ startDate: '2026-09-17', endDate: '2026-09-17' })).toBe(1);
+    expect(eventDayCount({ startDate: '2026-09-29', endDate: '2026-10-02' })).toBe(4);
+  });
+
+  it('formats one day or a range', () => {
+    expect(formatDateRange('2026-09-17', '2026-09-17')).toBe('17 ก.ย. 69');
+    expect(formatDateRange('2026-09-29', '2026-10-02')).toBe('29 ก.ย. 69 – 2 ต.ค. 69');
   });
 });
 
