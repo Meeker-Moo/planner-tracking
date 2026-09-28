@@ -44,6 +44,13 @@ import { currentFiscalYear } from '../../utils/date.util';
           >
             Monthly Report
           </a>
+          <a
+            routerLink="/excel"
+            routerLinkActive="bg-white shadow-sm text-slate-900"
+            class="px-3 md:px-4 py-2 rounded-md text-sm font-semibold text-slate-500 whitespace-nowrap"
+          >
+            Excel
+          </a>
         </nav>
 
         <div class="flex-grow"></div>

@@ -9,6 +9,7 @@ import {
 } from '../../shared/utils/date.util';
 import { todoProgress } from '../../shared/utils/activity.util';
 import { downloadBlob } from '../../shared/utils/file.util';
+import { loadExcelJs } from '../../shared/utils/exceljs.util';
 import { uid } from '../../shared/utils/id.util';
 import { renderTimelineImage } from '../../features/timeline/timeline-image';
 import { buildTimelineLayout } from '../../features/timeline/timeline.util';
@@ -36,14 +37,6 @@ function normalizeActivity(activity: Activity): Activity {
     id: activity.id ?? uid(),
     todos: activity.todos?.map((t) => ({ ...t, id: t.id ?? uid(), done: !!t.done })),
   };
-}
-
-type ExcelJs = typeof import('exceljs');
-
-// ExcelJS is large, so it is fetched only when someone exports to Excel.
-async function loadExcelJs(): Promise<ExcelJs> {
-  const mod = await import('exceljs');
-  return (mod as { default?: ExcelJs }).default ?? mod;
 }
 
 @Injectable({ providedIn: 'root' })

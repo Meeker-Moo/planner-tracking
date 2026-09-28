@@ -6,6 +6,7 @@ export const routes: Routes = [
   { path: 'plans/:id', loadComponent: () => import('./features/project-detail/project-detail').then((m) => m.ProjectDetail) },
   { path: 'timeline', loadComponent: () => import('./features/timeline/timeline').then((m) => m.Timeline) },
   { path: 'monthly-report', loadComponent: () => import('./features/monthly-report/monthly-report').then((m) => m.MonthlyReport) },
+  { path: 'excel', loadComponent: () => import('./features/excel-compare/excel-compare').then((m) => m.ExcelCompare) },
   { path: 'dashboard', loadComponent: () => import('./features/dashboard/dashboard').then((m) => m.Dashboard) },
   { path: '**', redirectTo: 'dashboard' },
 ];
