@@ -1,6 +1,16 @@
-import { ChangeDetectionStrategy, Component, ElementRef, HostListener, input, output, signal, viewChild } from '@angular/core';
-import { RouterLink, RouterLinkActive } from '@angular/router';
+import { ChangeDetectionStrategy, Component, ElementRef, HostListener, inject, input, output, signal, viewChild } from '@angular/core';
+import { Router, RouterLink, RouterLinkActive } from '@angular/router';
+import { AuthService } from '../../../core/auth/auth.service';
 import { currentFiscalYear } from '../../utils/date.util';
+
+/** The main menu; locked pages need a login (see app.routes.ts) and show a lock until then. */
+const NAV_ITEMS = [
+  { link: '/excel', label: 'Excel', locked: false },
+  { link: '/dashboard', label: 'Dashboard', locked: true },
+  { link: '/plans', label: 'รายการโครงการ', locked: true },
+  { link: '/timeline', label: 'Timeline', locked: true },
+  { link: '/monthly-report', label: 'Monthly Report', locked: true },
+];
 
 @Component({
   selector: 'app-toolbar',
@@ -15,45 +25,55 @@ import { currentFiscalYear } from '../../utils/date.util';
           <span class="text-[11px] text-slate-500 hidden sm:block">Annual Work Planning</span>
         </div>
 
-        <nav class="flex gap-1 bg-slate-100 p-1 rounded-lg shrink-0">
-          <a
-            routerLink="/dashboard"
-            routerLinkActive="bg-white shadow-sm text-slate-900"
-            class="px-3 md:px-4 py-2 rounded-md text-sm font-semibold text-slate-500 whitespace-nowrap"
-          >
-            Dashboard
-          </a>
-          <a
-            routerLink="/plans"
-            routerLinkActive="bg-white shadow-sm text-slate-900"
-            class="px-3 md:px-4 py-2 rounded-md text-sm font-semibold text-slate-500 whitespace-nowrap"
-          >
-            รายการโครงการ
-          </a>
-          <a
-            routerLink="/timeline"
-            routerLinkActive="bg-white shadow-sm text-slate-900"
-            class="px-3 md:px-4 py-2 rounded-md text-sm font-semibold text-slate-500 whitespace-nowrap"
-          >
-            Timeline
-          </a>
-          <a
-            routerLink="/monthly-report"
-            routerLinkActive="bg-white shadow-sm text-slate-900"
-            class="px-3 md:px-4 py-2 rounded-md text-sm font-semibold text-slate-500 whitespace-nowrap"
-          >
-            Monthly Report
-          </a>
-          <a
-            routerLink="/excel"
-            routerLinkActive="bg-white shadow-sm text-slate-900"
-            class="px-3 md:px-4 py-2 rounded-md text-sm font-semibold text-slate-500 whitespace-nowrap"
-          >
-            Excel
-          </a>
+        <nav class="flex gap-1 bg-slate-100 p-1 rounded-lg shrink-0 overflow-x-auto max-w-full">
+          @for (item of navItems; track item.link) {
+            <a
+              [routerLink]="item.link"
+              routerLinkActive="bg-white shadow-sm text-slate-900"
+              class="inline-flex items-center gap-1.5 px-3 md:px-4 py-2 rounded-md text-sm font-semibold text-slate-500 whitespace-nowrap"
+              [class.opacity-60]="item.locked && !auth.isLoggedIn()"
+              [title]="item.locked && !auth.isLoggedIn() ? 'ต้องเข้าสู่ระบบก่อน' : ''"
+            >
+              @if (item.locked && !auth.isLoggedIn()) {
+                <svg viewBox="0 0 20 20" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" aria-label="ต้องเข้าสู่ระบบ">
+                  <rect x="4.5" y="9" width="11" height="8" rx="2" />
+                  <path d="M7 9V6.5a3 3 0 016 0V9" stroke-linecap="round" />
+                </svg>
+              }
+              {{ item.label }}
+            </a>
+          }
         </nav>
 
         <div class="flex-grow"></div>
+
+        @if (auth.user(); as user) {
+          <div class="flex items-center gap-2 shrink-0">
+            <span class="hidden lg:flex items-center gap-2 text-sm font-semibold text-slate-700">
+              <span class="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold uppercase">
+                {{ user.username.slice(0, 2) }}
+              </span>
+              {{ user.displayName }}
+            </span>
+            <button
+              type="button"
+              class="px-3 py-2 rounded-lg border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-slate-50 whitespace-nowrap"
+              (click)="logout()"
+            >
+              ออกจากระบบ
+            </button>
+          </div>
+        } @else {
+          <a
+            routerLink="/login"
+            class="shrink-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-bold shadow-sm shadow-blue-600/30 hover:bg-blue-700 whitespace-nowrap"
+          >
+            <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <path d="M8 4H5.5A1.5 1.5 0 004 5.5v9A1.5 1.5 0 005.5 16H8M12 6.5L15.5 10 12 13.5M15.5 10H8" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            Login
+          </a>
+        }
 
         @if (showYear()) {
         <label class="hidden md:flex items-center gap-2 text-sm font-semibold text-slate-700 border border-slate-200 rounded-lg px-3 py-2">
@@ -139,6 +159,15 @@ export class Toolbar {
   exportExcel = output<void>();
 
   menuOpen = signal(false);
+
+  readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
+  readonly navItems = NAV_ITEMS;
+
+  logout(): void {
+    this.auth.logout();
+    this.router.navigateByUrl('/excel');
+  }
 
   private readonly menuRoot = viewChild<ElementRef<HTMLElement>>('menuRoot');
   private readonly fileInput = viewChild<ElementRef<HTMLInputElement>>('fileInput');

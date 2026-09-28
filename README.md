@@ -16,6 +16,25 @@ link" sign-in for it (organization-only access needs GitHub Enterprise Cloud). T
 index it (`noindex`), so it does not show up in results, but the link can be forwarded to anyone. The app keeps its
 data only in each visitor's own browser, so the published site holds no project data.
 
+## Login
+
+The first page, Excel Compare (`/excel`), is open to everyone. Every other page (Dashboard, the project list,
+Timeline, Monthly Report) needs a login with the one fixed account set in
+[src/app/core/auth/auth.config.ts](src/app/core/auth/auth.config.ts). A login lasts until the tab is closed, or
+30 days on that browser when "จดจำการเข้าสู่ระบบ" is ticked.
+
+To change the account, print the hash of `username:password` and paste it with the username into that file:
+
+```bash
+node -e "console.log(require('crypto').createHash('sha256').update('admin:NEW-PASSWORD').digest('hex'))"
+```
+
+What it protects: the login is checked in the browser, so it keeps casual visitors from using the other pages but
+is not real security. The site's files stay public on GitHub Pages, and anyone who knows how can edit the browser's
+storage to get past the check. The hash is visible in the site's code too, so use a long password that is not used
+anywhere else. To actually lock the site, put it behind the host's own sign-in (for example Cloudflare Access or a
+password-protected Netlify site) or move sign-in to a service such as Firebase Authentication.
+
 ## Development server
 
 To start a local development server, run:
