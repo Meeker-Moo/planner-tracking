@@ -1,5 +1,5 @@
 import { computed, inject, Injectable, signal } from '@angular/core';
-import { AUTH_ACCOUNT, AuthAccount, REMEMBER_DAYS } from './auth.config';
+import { AUTH_ACCOUNT, AuthAccount, BYPASS_LOGIN, REMEMBER_DAYS } from './auth.config';
 
 const SESSION_KEY = 'awp.session';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -29,7 +29,9 @@ export function safeReturnUrl(url: string | null | undefined, fallback = '/dashb
 @Injectable({ providedIn: 'root' })
 export class AuthService {
   private readonly account = inject(AUTH_ACCOUNT);
-  private readonly session = signal<Session | null>(this.readStored(sessionStorage) ?? this.readStored(localStorage));
+  private readonly session = signal<Session | null>(
+    this.readStored(sessionStorage) ?? this.readStored(localStorage) ?? (inject(BYPASS_LOGIN) ? this.devSession() : null),
+  );
 
   readonly user = this.session.asReadonly();
   readonly isLoggedIn = computed(() => this.session() !== null);
@@ -58,6 +60,11 @@ export class AuthService {
   logout(): void {
     this.clearStored();
     this.session.set(null);
+  }
+
+  /** The develop environment's automatic sign-in (see BYPASS_LOGIN); it is not stored, so it ends with the page. */
+  private devSession(): Session {
+    return { username: this.account.username, displayName: `${this.account.displayName} (develop)`, expiresAt: null };
   }
 
   /** A stored session, if it is for the current account and has not expired (an expired one is removed). */

@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { AUTH_ACCOUNT, AuthAccount } from './auth.config';
+import { AUTH_ACCOUNT, AuthAccount, BYPASS_LOGIN } from './auth.config';
 import { AuthService, credentialHash, safeReturnUrl } from './auth.service';
 
 // sha256('tester:secret-1')
@@ -9,9 +9,14 @@ const account: AuthAccount = {
   displayName: 'ผู้ทดสอบ',
 };
 
-function create(): AuthService {
+function create(bypass = false): AuthService {
   TestBed.resetTestingModule();
-  TestBed.configureTestingModule({ providers: [{ provide: AUTH_ACCOUNT, useValue: account }] });
+  TestBed.configureTestingModule({
+    providers: [
+      { provide: AUTH_ACCOUNT, useValue: account },
+      { provide: BYPASS_LOGIN, useValue: bypass },
+    ],
+  });
   return TestBed.inject(AuthService);
 }
 
@@ -59,6 +64,14 @@ describe('AuthService', () => {
     auth.logout();
     expect(auth.isLoggedIn()).toBe(false);
     expect(create().isLoggedIn()).toBe(false);
+  });
+
+  it('signs in without the login page in the develop environment', () => {
+    const auth = create(true);
+    expect(auth.user()).toMatchObject({ username: 'tester', displayName: 'ผู้ทดสอบ (develop)', expiresAt: null });
+    expect(sessionStorage.length + localStorage.length).toBe(0);
+    auth.logout();
+    expect(auth.isLoggedIn()).toBe(false);
   });
 
   it('keeps the return address inside the app', () => {

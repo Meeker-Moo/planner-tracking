@@ -1,4 +1,5 @@
 import { InjectionToken } from '@angular/core';
+import { environment } from '../../../environments/environment';
 
 /**
  * The one fixed account that may sign in.
@@ -29,6 +30,12 @@ export const AUTH_USER: AuthAccount = {
 
 /** The account AuthService checks against; tests provide their own. */
 export const AUTH_ACCOUNT = new InjectionToken<AuthAccount>('AUTH_ACCOUNT', { providedIn: 'root', factory: () => AUTH_USER });
+
+/**
+ * True in the develop environment (`ng serve`): everyone counts as signed in as AUTH_USER without the login page.
+ * Signing out still works until the page is reloaded. Production builds always ask for the login.
+ */
+export const BYPASS_LOGIN = new InjectionToken<boolean>('BYPASS_LOGIN', { providedIn: 'root', factory: () => environment.env === 'develop' });
 
 /** How long "จดจำการเข้าสู่ระบบ" keeps someone signed in on this browser. */
 export const REMEMBER_DAYS = 30;

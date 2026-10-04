@@ -23,6 +23,10 @@ Timeline, Monthly Report) needs a login with the one fixed account set in
 [src/app/core/auth/auth.config.ts](src/app/core/auth/auth.config.ts). A login lasts until the tab is closed, or
 30 days on that browser when "จดจำการเข้าสู่ระบบ" is ticked.
 
+In the develop environment (`ng serve`, or `ng build --configuration development`) the login is skipped: every page
+opens signed in as that account, shown as "(develop)" in the toolbar. The environment comes from
+[src/environments/](src/environments/); production builds (`ng build`, GitHub Pages) always ask for the login.
+
 To change the account, print the hash of `username:password` and paste it with the username into that file:
 
 ```bash
