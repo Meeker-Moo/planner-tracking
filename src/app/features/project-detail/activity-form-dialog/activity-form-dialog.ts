@@ -1,11 +1,13 @@
-import { ChangeDetectionStrategy, Component, computed, effect, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, ElementRef, input, output, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Activity, TodoItem, WorkStatus } from '../../../core/models/work-plan.model';
 import { STATUS_LIST, STATUS_MAP } from '../../../core/models/status.constant';
 import { ThaiDatePicker } from '../../../shared/components/thai-date-picker/thai-date-picker';
+import { formatDateShort } from '../../../shared/utils/date.util';
 import { uid } from '../../../shared/utils/id.util';
+import { daysBetween, quarterOf } from '../project-detail.util';
 
-/** Add or edit one activity of a project, including its to-do list. */
+/** Add or edit one activity of a project, including its to-do list. A bottom sheet on phones, a centred dialog otherwise. */
 @Component({
   selector: 'app-activity-form-dialog',
   standalone: true,
@@ -13,52 +15,143 @@ import { uid } from '../../../shared/utils/id.util';
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (open()) {
-      <div class="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
-        <div class="w-full max-w-2xl max-h-[90vh] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden">
-          <div class="px-6 py-5 border-b border-slate-200 flex items-center justify-between shrink-0">
-            <span class="text-lg font-bold text-slate-900">{{ editing() ? 'แก้ไขกิจกรรม' : 'เพิ่มกิจกรรมใหม่' }}</span>
+      <div
+        class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-[2px] flex items-end sm:items-center justify-center sm:p-4"
+        (keydown.escape)="onEscape($event)"
+      >
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="activity-form-title"
+          class="w-full sm:max-w-2xl max-h-[92vh] sm:max-h-[90vh] bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+        >
+          <div class="px-5 sm:px-6 py-4 border-b border-slate-200 flex items-center gap-3 shrink-0">
+            <span class="w-10 h-10 shrink-0 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+              <svg viewBox="0 0 20 20" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                @if (editing()) {
+                  <path d="M13.5 3.5l3 3L7 16H4v-3l9.5-9.5z" stroke-linejoin="round" />
+                } @else {
+                  <path d="M10 4.5v11M4.5 10h11" stroke-linecap="round" />
+                }
+              </svg>
+            </span>
+            <div class="min-w-0 grow">
+              <h2 id="activity-form-title" class="text-lg font-bold text-slate-900">{{ editing() ? 'แก้ไขกิจกรรม' : 'เพิ่มกิจกรรมใหม่' }}</h2>
+              @if (projectName()) {
+                <p class="text-xs text-slate-500 truncate">โครงการ: {{ projectName() }}</p>
+              }
+            </div>
             <button
               type="button"
               aria-label="ปิด"
-              class="w-8 h-8 rounded-lg bg-slate-100 text-slate-500 text-base"
+              class="w-9 h-9 shrink-0 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-100 hover:text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
               (click)="cancel.emit()"
             >
-              ×
+              <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M5 5l10 10M15 5L5 15" stroke-linecap="round" />
+              </svg>
             </button>
           </div>
 
-          <div class="p-6 flex flex-col gap-4 overflow-y-auto">
-            <label class="flex flex-col gap-1.5">
-              <span class="text-sm font-semibold text-slate-700">ชื่อกิจกรรม</span>
-              <input
-                type="text"
-                placeholder="เช่น อบรมรุ่นที่ 1"
-                class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500"
-                [(ngModel)]="name"
-              />
-            </label>
-
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div class="px-5 sm:px-6 py-5 flex flex-col gap-6 overflow-y-auto">
+            <!-- What -->
+            <div class="flex flex-col gap-4">
+              <label class="flex flex-col gap-1.5">
+                <span class="text-sm font-semibold text-slate-700">ชื่อกิจกรรม <span class="text-red-500">*</span></span>
+                <input
+                  #nameInput
+                  type="text"
+                  required
+                  placeholder="เช่น อบรมรุ่นที่ 1"
+                  class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+                  [(ngModel)]="name"
+                />
+              </label>
               <label class="flex flex-col gap-1.5">
                 <span class="text-sm font-semibold text-slate-700">ผู้รับผิดชอบ</span>
                 <input
                   type="text"
-                  placeholder="เช่น นายสมชาย"
-                  class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                  placeholder="เช่น นายสมชาย หรือ ฝ่ายแผนงาน"
+                  class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
                   [(ngModel)]="responsible"
                 />
               </label>
-              <label class="flex flex-col gap-1.5">
-                <span class="text-sm font-semibold text-slate-700">สถานะ</span>
-                <select
-                  class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500"
-                  [(ngModel)]="status"
-                >
-                  @for (s of statusList; track s.value) {
-                    <option [value]="s.value">{{ s.label }}</option>
+            </div>
+
+            <!-- When -->
+            <div class="flex flex-col gap-2">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div class="flex flex-col gap-1.5">
+                  <span class="text-sm font-semibold text-slate-700">วันที่เริ่ม <span class="text-red-500">*</span></span>
+                  <app-thai-date-picker ariaLabel="วันที่เริ่มกิจกรรม" [value]="startDate()" (valueChange)="onStartChange($event)" />
+                </div>
+                <div class="flex flex-col gap-1.5">
+                  <span class="text-sm font-semibold text-slate-700">วันที่สิ้นสุด <span class="text-red-500">*</span></span>
+                  <app-thai-date-picker ariaLabel="วันที่สิ้นสุดกิจกรรม" [value]="endDate()" (valueChange)="onEndChange($event)" />
+                </div>
+              </div>
+              @if (duration(); as d) {
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                  <span class="inline-flex items-center gap-1.5 rounded-md bg-slate-100 text-slate-600 font-medium px-2 py-1">
+                    <svg viewBox="0 0 20 20" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                      <circle cx="10" cy="10" r="7" /><path d="M10 6.5V10l2.5 1.5" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                    รวม {{ d }} วัน
+                  </span>
+                  @if (quarterText()) {
+                    <span class="inline-flex items-center rounded-md bg-blue-50 text-blue-700 font-medium px-2 py-1">{{ quarterText() }}</span>
                   }
-                </select>
-              </label>
+                  @if (outsideProject()) {
+                    <span class="inline-flex items-center gap-1.5 text-amber-700">
+                      <svg viewBox="0 0 20 20" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                        <path d="M10 3.5l7 12.5H3L10 3.5z" stroke-linejoin="round" /><path d="M10 8.5v3M10 14h.01" stroke-linecap="round" />
+                      </svg>
+                      อยู่นอกช่วงของโครงการ ({{ formatDate(defaultStart()) }} – {{ formatDate(defaultEnd()) }})
+                    </span>
+                  }
+                </div>
+              }
+            </div>
+
+            <!-- Status -->
+            <div class="flex flex-col gap-2">
+              <span class="text-sm font-semibold text-slate-700">สถานะ</span>
+              <div class="flex flex-wrap gap-2" role="radiogroup" aria-label="สถานะ">
+                @for (s of statusList; track s.value) {
+                  <button
+                    type="button"
+                    role="radio"
+                    class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-semibold border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+                    [style.background]="status() === s.value ? s.bg : '#FFFFFF'"
+                    [style.color]="status() === s.value ? s.text : '#64748B'"
+                    [style.border-color]="status() === s.value ? s.dot : '#E2E8F0'"
+                    [attr.aria-checked]="status() === s.value"
+                    (click)="status.set(s.value)"
+                  >
+                    <span class="w-2 h-2 rounded-full" [style.background]="s.dot"></span>
+                    {{ s.label }}
+                  </button>
+                }
+              </div>
+              @if (statusChanged() || note() || noteOpen()) {
+                <label class="mt-1 flex flex-col gap-1.5">
+                  <span class="text-sm font-semibold text-slate-700">หมายเหตุ</span>
+                  @if (statusChanged()) {
+                    <span class="text-xs text-amber-700">
+                      เปลี่ยนสถานะจาก "{{ statusLabel(originalStatus()) }}" เป็น "{{ statusLabel(status()) }}" — ควรระบุเหตุผล
+                    </span>
+                  }
+                  <textarea
+                    rows="2"
+                    placeholder="เช่น เหตุผลที่เลื่อน / ยกเลิก"
+                    class="border rounded-lg px-3 py-2.5 text-sm outline-none resize-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+                    [class]="statusChanged() && !note().trim() ? 'border-amber-400 bg-amber-50/40' : 'border-slate-200'"
+                    [(ngModel)]="note"
+                  ></textarea>
+                </label>
+              } @else {
+                <button type="button" class="w-fit text-sm font-semibold text-blue-600 hover:text-blue-700" (click)="showNote()">+ เพิ่มหมายเหตุ</button>
+              }
             </div>
 
             <label class="flex flex-col gap-1.5">
@@ -66,56 +159,36 @@ import { uid } from '../../../shared/utils/id.util';
               <textarea
                 rows="3"
                 placeholder="รายละเอียดของกิจกรรม (ถ้ามี)"
-                class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none resize-none focus:border-blue-500"
+                class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none resize-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
                 [(ngModel)]="description"
               ></textarea>
             </label>
 
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div class="flex flex-col gap-1.5">
-                <span class="text-sm font-semibold text-slate-700">วันที่เริ่ม</span>
-                <app-thai-date-picker ariaLabel="วันที่เริ่มกิจกรรม" [value]="startDate()" (valueChange)="onStartChange($event)" />
+            <!-- To-do list -->
+            <div class="flex flex-col gap-2 rounded-xl bg-slate-50 ring-1 ring-slate-200 p-3.5">
+              <div class="flex items-center gap-3">
+                <span class="text-sm font-semibold text-slate-700">To do ย่อย</span>
+                @if (todos().length) {
+                  <span class="text-xs text-slate-500 tabular-nums">{{ doneCount() }}/{{ todos().length }} เสร็จแล้ว</span>
+                  <div class="grow max-w-40 h-1.5 rounded-full bg-white ring-1 ring-slate-200 overflow-hidden">
+                    <div class="h-full rounded-full bg-emerald-500" [style.width.%]="(doneCount() / todos().length) * 100"></div>
+                  </div>
+                }
               </div>
-              <div class="flex flex-col gap-1.5">
-                <span class="text-sm font-semibold text-slate-700">วันที่สิ้นสุด</span>
-                <app-thai-date-picker ariaLabel="วันที่สิ้นสุดกิจกรรม" [value]="endDate()" (valueChange)="onEndChange($event)" />
-              </div>
-            </div>
-
-            <label class="flex flex-col gap-1.5">
-              <span class="text-sm font-semibold text-slate-700">หมายเหตุ (กรณีเปลี่ยนสถานะ)</span>
-              <input
-                type="text"
-                placeholder="เช่น เหตุผลที่เลื่อน / ยกเลิก"
-                class="border rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500"
-                [class]="statusChanged() && !note().trim() ? 'border-amber-400' : 'border-slate-200'"
-                [(ngModel)]="note"
-              />
-              @if (statusChanged()) {
-                <span class="text-xs text-amber-700">
-                  เปลี่ยนสถานะจาก "{{ statusLabel(originalStatus()) }}" เป็น "{{ statusLabel(status()) }}" — ควรระบุหมายเหตุ
-                </span>
-              }
-            </label>
-
-            <div class="flex flex-col gap-2.5">
-              <span class="text-sm font-semibold text-slate-700">
-                To do ย่อย <span class="font-normal text-slate-400">({{ doneCount() }}/{{ todos().length }} เสร็จแล้ว)</span>
-              </span>
 
               @for (t of todos(); track t.id) {
                 <div class="flex items-center gap-2">
                   <input
                     type="checkbox"
-                    class="w-4 h-4 shrink-0 accent-blue-600"
-                    aria-label="ทำเสร็จแล้ว"
+                    class="w-4 h-4 shrink-0 accent-emerald-600"
+                    [attr.aria-label]="'ทำเสร็จแล้ว: ' + t.text"
                     [checked]="t.done"
                     (change)="patchTodo(t.id, { done: $any($event.target).checked })"
                   />
                   <input
                     type="text"
                     aria-label="รายการ to do"
-                    class="flex-1 min-w-0 border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+                    class="flex-1 min-w-0 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
                     [class.line-through]="t.done"
                     [class.text-slate-400]="t.done"
                     [ngModel]="t.text"
@@ -123,11 +196,14 @@ import { uid } from '../../../shared/utils/id.util';
                   />
                   <button
                     type="button"
-                    aria-label="ลบรายการนี้"
-                    class="w-8 h-8 shrink-0 rounded-lg text-lg text-red-600 hover:bg-red-50"
+                    [attr.aria-label]="'ลบ ' + t.text"
+                    title="ลบรายการนี้"
+                    class="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-600 outline-none focus-visible:ring-2 focus-visible:ring-red-500/60"
                     (click)="removeTodo(t.id)"
                   >
-                    ×
+                    <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                      <path d="M4 6h12M8 6V4.5h4V6M6 6l.7 10h6.6L14 6" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
                   </button>
                 </div>
               }
@@ -137,14 +213,15 @@ import { uid } from '../../../shared/utils/id.util';
                   type="text"
                   placeholder="พิมพ์รายการ to do แล้วกด Enter"
                   aria-label="เพิ่มรายการ to do"
-                  class="flex-1 min-w-0 border border-dashed border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+                  class="flex-1 min-w-0 bg-white border border-dashed border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 focus:border-solid"
                   [ngModel]="newTodo()"
                   (ngModelChange)="newTodo.set($event)"
                   (keydown.enter)="addTodo(); $event.preventDefault()"
                 />
                 <button
                   type="button"
-                  class="px-3 py-2 rounded-lg border border-slate-200 text-sm font-semibold text-blue-600 hover:bg-blue-50"
+                  class="px-3 py-2 rounded-lg bg-white border border-slate-200 text-sm font-semibold text-blue-600 hover:bg-blue-50 disabled:opacity-40 disabled:hover:bg-white"
+                  [disabled]="!newTodo().trim()"
                   (click)="addTodo()"
                 >
                   + เพิ่ม
@@ -153,21 +230,23 @@ import { uid } from '../../../shared/utils/id.util';
             </div>
           </div>
 
-          <div class="px-6 py-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
+          <div class="px-5 sm:px-6 py-4 border-t border-slate-200 bg-slate-50/60 flex flex-col-reverse sm:flex-row sm:items-center gap-2 sm:gap-3 shrink-0">
+            <span class="hidden sm:block grow text-xs text-slate-400"><span class="text-red-500">*</span> จำเป็นต้องกรอก</span>
             <button
               type="button"
-              class="px-4 py-2.5 rounded-lg border border-slate-200 text-sm font-semibold text-slate-700"
+              class="px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50"
               (click)="cancel.emit()"
             >
               ยกเลิก
             </button>
             <button
               type="button"
-              class="px-4 py-2.5 rounded-lg bg-blue-600 text-sm font-bold text-white disabled:opacity-40"
-              [disabled]="!name().trim() || !startDate() || !endDate()"
+              class="px-5 py-2.5 rounded-xl bg-blue-600 text-sm font-bold text-white shadow-sm shadow-blue-600/30 hover:bg-blue-700 disabled:opacity-40 disabled:shadow-none disabled:hover:bg-blue-600"
+              [disabled]="!canSave()"
+              [title]="canSave() ? '' : 'กรุณาใส่ชื่อกิจกรรมและวันที่'"
               (click)="onSave()"
             >
-              บันทึกกิจกรรม
+              {{ editing() ? 'บันทึกการแก้ไข' : 'เพิ่มกิจกรรม' }}
             </button>
           </div>
         </div>
@@ -179,14 +258,17 @@ export class ActivityFormDialog {
   open = input(false);
   /** The activity being edited; null when adding a new one. */
   editing = input<Activity | null>(null);
-  /** Dates a new activity starts with (the project's own range). */
+  /** The project's own range: a new activity starts with it, and dates outside it are pointed out. */
   defaultStart = input('');
   defaultEnd = input('');
+  /** Shown under the title. */
+  projectName = input('');
 
   save = output<Activity>();
   cancel = output<void>();
 
   readonly statusList = STATUS_LIST;
+  readonly formatDate = formatDateShort;
 
   name = signal('');
   responsible = signal('');
@@ -197,8 +279,34 @@ export class ActivityFormDialog {
   note = signal('');
   todos = signal<TodoItem[]>([]);
   newTodo = signal('');
+  /** The note box is shown once asked for, or when the status changes or a note is already there. */
+  noteOpen = signal(false);
+
+  private readonly nameInput = viewChild<ElementRef<HTMLInputElement>>('nameInput');
 
   doneCount = computed(() => this.todos().filter((t) => t.done).length);
+
+  canSave = computed(() => !!this.name().trim() && !!this.startDate() && !!this.endDate());
+
+  /** Days from the start to the end date, both counted. */
+  duration = computed(() => {
+    const days = daysBetween(this.startDate(), this.endDate());
+    return days === null || days < 0 ? null : days + 1;
+  });
+
+  /** "ไตรมาส 1/2570", or "ไตรมาส 4/2569 – 1/2570" for dates across quarters. */
+  quarterText = computed(() => {
+    const first = quarterOf(this.startDate());
+    const last = quarterOf(this.endDate());
+    if (!first || !last) return '';
+    const name = (q: NonNullable<typeof first>) => `${q.quarter}/${q.fiscalYear}`;
+    return name(first) === name(last) ? `ไตรมาส ${name(first)}` : `ไตรมาส ${name(first)} – ${name(last)}`;
+  });
+
+  outsideProject = computed(() => {
+    const [start, end] = [this.defaultStart(), this.defaultEnd()];
+    return !!start && !!end && (this.startDate() < start || this.endDate() > end);
+  });
 
   /** The status the activity had when the dialog was opened; undefined for a new one. */
   originalStatus = computed(() => this.editing()?.status);
@@ -208,10 +316,15 @@ export class ActivityFormDialog {
   });
 
   constructor() {
+    // Start typing the name as soon as the dialog opens.
+    effect(() => {
+      if (this.open()) this.nameInput()?.nativeElement.focus();
+    });
     effect(() => {
       if (!this.open()) return;
       const a = this.editing();
       this.newTodo.set('');
+      this.noteOpen.set(false);
       if (a) {
         this.name.set(a.name);
         this.responsible.set(a.responsible ?? '');
@@ -232,6 +345,16 @@ export class ActivityFormDialog {
         this.todos.set([]);
       }
     });
+  }
+
+  /** Escape closes the dialog, unless it is closing a date picker's calendar. */
+  onEscape(event: Event): void {
+    if ((event.target as HTMLElement).closest('app-thai-date-picker')) return;
+    this.cancel.emit();
+  }
+
+  showNote(): void {
+    this.noteOpen.set(true);
   }
 
   statusLabel(status: WorkStatus | undefined): string {
@@ -266,7 +389,7 @@ export class ActivityFormDialog {
 
   onSave(): void {
     const name = this.name().trim();
-    if (!name || !this.startDate() || !this.endDate()) return;
+    if (!this.canSave()) return;
     this.addTodo(); // a to-do typed but not yet added is kept rather than lost
     const clean = (text: string) => text.trim() || undefined;
     // Items left blank are dropped.

@@ -564,6 +564,7 @@ const TONE_CLASS: Record<string, string> = {
       [editing]="editingActivity()"
       [defaultStart]="plan()?.startDate ?? ''"
       [defaultEnd]="plan()?.endDate ?? ''"
+      [projectName]="plan()?.name ?? ''"
       (save)="onSaveActivity($event)"
       (cancel)="closeActivityForm()"
     />
