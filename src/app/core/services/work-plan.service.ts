@@ -12,11 +12,18 @@ export class WorkPlanService {
 
   readonly plans = this.plansSignal.asReadonly();
 
+  /** Every fiscal year from the earliest project to the latest (and the current year), newest first, with no gaps. */
   readonly years = computed(() => {
-    const set = new Set(this.plansSignal().map((p) => p.year));
-    set.add(currentFiscalYear());
-    return Array.from(set).sort((a, b) => b - a);
+    const years = [...this.plansSignal().map((p) => p.year), currentFiscalYear()].filter(Number.isInteger);
+    const newest = Math.max(...years);
+    const oldest = Math.min(...years);
+    return Array.from({ length: newest - oldest + 1 }, (_, i) => newest - i);
   });
+
+  /** The fiscal years that have at least one project, newest first. */
+  readonly yearsWithPlans = computed(() =>
+    Array.from(new Set(this.plansSignal().map((p) => p.year))).sort((a, b) => b - a),
+  );
 
   constructor(private readonly storage: StorageService) {
     const loaded = this.storage.get<WorkPlan[]>(STORAGE_KEY);

@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { Activity, WorkPlanInput } from '../models/work-plan.model';
 import { WorkPlanService } from './work-plan.service';
+import { currentFiscalYear } from '../../shared/utils/date.util';
 
 const input: WorkPlanInput = {
   year: 2569,
@@ -77,5 +78,34 @@ describe('WorkPlanService activities', () => {
     service.saveActivity(plan.id, activity('a1'));
     const stored = JSON.parse(localStorage.getItem('awp:plans:v1') ?? '[]');
     expect(stored[0].activities[0].id).toBe('a1');
+  });
+});
+
+describe('WorkPlanService years', () => {
+  let service: WorkPlanService;
+
+  beforeEach(() => {
+    localStorage.clear();
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(WorkPlanService);
+  });
+
+  it('is just the current fiscal year when there are no projects', () => {
+    expect(service.years()).toEqual([currentFiscalYear()]);
+    expect(service.yearsWithPlans()).toEqual([]);
+  });
+
+  it('fills the gap between the oldest project and the current year, newest first', () => {
+    const now = currentFiscalYear();
+    service.add({ ...input, year: now - 3 });
+    service.add({ ...input, year: now - 1 });
+    expect(service.years()).toEqual([now, now - 1, now - 2, now - 3]);
+    expect(service.yearsWithPlans()).toEqual([now - 1, now - 3]);
+  });
+
+  it('reaches forward to a project planned after the current year', () => {
+    const now = currentFiscalYear();
+    service.add({ ...input, year: now + 2 });
+    expect(service.years()).toEqual([now + 2, now + 1, now]);
   });
 });

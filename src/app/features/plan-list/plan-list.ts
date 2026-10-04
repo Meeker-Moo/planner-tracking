@@ -1,29 +1,30 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
 import { Toolbar } from '../../shared/components/toolbar/toolbar';
-import { StatusBadge } from '../../shared/components/status-badge/status-badge';
 import { ConfirmDialog } from '../../shared/components/confirm-dialog/confirm-dialog';
 import { PlanFormDialog } from './plan-form-dialog/plan-form-dialog';
+import { PlanTable } from './plan-table/plan-table';
 import { WorkPlanService } from '../../core/services/work-plan.service';
 import { ExportImportService } from '../../core/services/export-import.service';
+import { FiscalYearStateService, ListSpan } from '../../core/services/fiscal-year-state.service';
 import { STATUS_LIST, THAI_MONTHS_FULL, WORK_TYPES } from '../../core/models/status.constant';
-import { WorkPlan, WorkPlanInput } from '../../core/models/work-plan.model';
-import { todoProgress } from '../../shared/utils/activity.util';
-import {
-  currentFiscalYear,
-  fiscalMonths,
-  fiscalYearRangeLabel,
-  formatDateShort,
-  formatMonthYearShort,
-  monthSpanInFiscalYear,
-} from '../../shared/utils/date.util';
+import { WorkPlan, WorkPlanInput, WorkStatus } from '../../core/models/work-plan.model';
+import { fiscalMonths, fiscalYearRangeLabel } from '../../shared/utils/date.util';
+import { PlanFilters, buildPlanGroups, countByStatus, fiscalYearsInView, hasActiveFilters } from './plan-list.util';
+
+const SPAN_OPTIONS: { value: ListSpan; label: string }[] = [
+  { value: 1, label: 'ปีเดียว' },
+  { value: 3, label: 'ย้อนหลัง 3 ปี' },
+  { value: 5, label: 'ย้อนหลัง 5 ปี' },
+  { value: 'all', label: 'ทั้งหมด' },
+];
 
 @Component({
   selector: 'app-plan-list',
   standalone: true,
-  imports: [FormsModule, RouterLink, Toolbar, StatusBadge, ConfirmDialog, PlanFormDialog],
+  imports: [FormsModule, Toolbar, ConfirmDialog, PlanFormDialog, PlanTable],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { class: 'grow flex flex-col min-h-0' },
   template: `
     <app-toolbar
       [years]="workPlanService.years()"
@@ -31,143 +32,175 @@ import {
       (yearChange)="selectedYear.set($event)"
       (addClick)="openAdd()"
       (importJson)="onImportJson($event)"
-      (exportJson)="exportImportService.exportJson(filteredPlans(), selectedYear())"
-      (exportExcel)="exportImportService.exportExcel(filteredPlans(), selectedYear())"
+      (exportJson)="exportImportService.exportJson(visiblePlans(), selectedYear())"
+      (exportExcel)="exportImportService.exportExcel(visiblePlans(), selectedYear())"
     />
 
-    <div class="flex-shrink-0 bg-white border-b border-slate-200 flex flex-wrap items-center gap-3 px-4 md:px-8 py-3.5">
-      <label class="flex items-center gap-2 border border-slate-200 rounded-lg px-3 py-2 bg-slate-50 w-full sm:w-64">
-        <span class="text-slate-400 text-sm">ค้นหา</span>
-        <input
-          type="text"
-          placeholder="ชื่อโครงการ, กิจกรรม, ผู้รับผิดชอบ..."
-          class="bg-transparent outline-none text-sm w-full"
-          [(ngModel)]="search"
-        />
-      </label>
-      <select class="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700" [(ngModel)]="monthFilter">
-        <option [ngValue]="null">ทุกเดือน</option>
-        @for (m of monthOptions(); track m.value) {
-          <option [ngValue]="m.value">{{ m.label }}</option>
-        }
-      </select>
-      <select class="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700" [(ngModel)]="statusFilter">
-        <option [ngValue]="null">ทุกสถานะ</option>
-        @for (s of statusList; track s.value) {
-          <option [ngValue]="s.value">{{ s.label }}</option>
-        }
-      </select>
-      <select class="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700" [(ngModel)]="typeFilter">
-        <option [ngValue]="null">ทุกประเภท</option>
-        @for (t of workTypes; track t) {
-          <option [ngValue]="t">{{ t }}</option>
-        }
-      </select>
-      <div class="flex-grow"></div>
-      @if (expandablePlans().length > 0) {
-        <button type="button" class="text-sm font-semibold text-blue-600" (click)="toggleAll()">
-          {{ allExpanded() ? 'ย่อทั้งหมด' : 'ขยายทั้งหมด' }}
-        </button>
-      }
-      <span class="text-sm text-slate-500">
-        ปีงบประมาณ {{ selectedYear() }} ({{ fiscalRange(selectedYear()) }}) · ทั้งหมด {{ filteredPlans().length }} รายการ
-      </span>
-    </div>
-
-    <div class="flex-grow overflow-auto p-4 md:p-8">
-      <div class="bg-white border border-slate-200 rounded-xl overflow-x-auto">
-        <table class="w-full min-w-[820px] text-sm">
-          <thead>
-            <tr class="bg-slate-50 border-b border-slate-200 text-left">
-              <th class="px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wide">ชื่อโครงการ</th>
-              <th class="px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wide">ประเภท</th>
-              <th class="px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wide">ผู้รับผิดชอบ</th>
-              <th class="px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wide">เริ่ม</th>
-              <th class="px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wide">สิ้นสุด</th>
-              <th class="px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wide">สถานะ</th>
-              <th class="px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wide text-right">จัดการ</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (item of filteredPlans(); track item.id) {
-              <tr class="border-b border-slate-100 last:border-b-0">
-                <td class="px-4 py-3.5">
-                  <div class="flex items-start gap-2">
-                    @if (countActivities(item) > 0) {
-                      <button
-                        type="button"
-                        class="w-6 h-6 shrink-0 flex items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-blue-600"
-                        [attr.aria-label]="(isExpanded(item.id) ? 'ย่อ' : 'ขยาย') + 'กิจกรรมย่อยของ ' + item.name"
-                        [attr.aria-expanded]="isExpanded(item.id)"
-                        (click)="toggleExpanded(item.id)"
-                      >
-                        <span class="inline-block text-[10px] transition-transform" [class.rotate-90]="isExpanded(item.id)" aria-hidden="true">▶</span>
-                      </button>
-                    } @else {
-                      <span class="w-6 shrink-0"></span>
-                    }
-                    <div class="min-w-0">
-                      <a
-                        [routerLink]="['/plans', item.id]"
-                        class="block w-fit font-semibold text-slate-900 hover:text-blue-600 hover:underline"
-                        title="ดูรายละเอียดโครงการและจัดการกิจกรรม"
-                      >
-                        {{ item.name }}
-                      </a>
-                      @if (countActivities(item) > 0) {
-                        <button
-                          type="button"
-                          class="mt-0.5 text-xs text-slate-500 hover:text-blue-600"
-                          (click)="toggleExpanded(item.id)"
-                        >
-                          กิจกรรมย่อย {{ countDone(item) }}/{{ countActivities(item) }} เสร็จสิ้น
-                        </button>
-                      }
-                    </div>
-                  </div>
-                </td>
-                <td class="px-4 py-3.5 text-slate-600">{{ item.type }}</td>
-                <td class="px-4 py-3.5 text-slate-600">{{ item.responsible }}</td>
-                <td class="px-4 py-3.5 text-slate-600">{{ formatMonth(item.startDate) }}</td>
-                <td class="px-4 py-3.5 text-slate-600">{{ formatMonth(item.endDate) }}</td>
-                <td class="px-4 py-3.5"><app-status-badge [status]="item.status" /></td>
-                <td class="px-4 py-3.5 text-right whitespace-nowrap">
-                  <a [routerLink]="['/plans', item.id]" class="text-slate-700 font-semibold px-1.5 hover:text-blue-600">รายละเอียด</a>
-                  <button type="button" class="text-blue-600 font-semibold px-1.5" (click)="openEdit(item)">แก้ไข</button>
-                  <button type="button" class="text-red-600 font-semibold px-1.5" (click)="askDelete(item)">ลบ</button>
-                </td>
-              </tr>
-              @if (isExpanded(item.id)) {
-                @for (a of item.activities; track a.id) {
-                  <tr class="border-b border-slate-100 bg-slate-50">
-                    <td class="pl-12 pr-4 py-2.5 text-slate-700">
-                      <div>{{ a.name }}</div>
-                      @if (a.description) {
-                        <div class="text-xs text-slate-500 whitespace-pre-line">{{ a.description }}</div>
-                      }
-                      @if (a.note) {
-                        <div class="text-xs text-amber-700 whitespace-pre-line">หมายเหตุ: {{ a.note }}</div>
-                      }
-                      @if (progress(a).total > 0) {
-                        <div class="text-xs text-slate-500">To do {{ progress(a).done }}/{{ progress(a).total }} เสร็จแล้ว</div>
-                      }
-                    </td>
-                    <td></td>
-                    <td class="px-4 py-2.5 text-slate-600">{{ a.responsible }}</td>
-                    <td class="px-4 py-2.5 text-slate-600">{{ formatDate(a.startDate) }}</td>
-                    <td class="px-4 py-2.5 text-slate-600">{{ formatDate(a.endDate) }}</td>
-                    <td class="px-4 py-2.5"><app-status-badge [status]="a.status" /></td>
-                    <td></td>
-                  </tr>
-                }
-              }
-            } @empty {
-              <tr>
-                <td colspan="7" class="px-4 py-12 text-center text-slate-400">ยังไม่มีโครงการ — เริ่มเพิ่มโครงการแรกของคุณ</td>
-              </tr>
+    <div class="grow overflow-auto">
+      <div class="max-w-7xl mx-auto px-4 md:px-8 py-5 md:py-7 flex flex-col gap-5">
+        <!-- Heading and how many years to show -->
+        <div class="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 class="text-xl md:text-2xl font-bold text-slate-900">รายการโครงการ</h1>
+            <p class="mt-0.5 text-sm text-slate-500">{{ subtitle() }}</p>
+          </div>
+          <div class="flex bg-white border border-slate-200 rounded-xl p-1 shadow-sm overflow-x-auto max-w-full" role="radiogroup" aria-label="ช่วงปีงบประมาณที่แสดง">
+            @for (o of spanOptions; track o.value) {
+              <button
+                type="button"
+                role="radio"
+                class="px-3 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+                [class]="listSpan() === o.value ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'"
+                [attr.aria-checked]="listSpan() === o.value"
+                (click)="listSpan.set(o.value)"
+              >
+                {{ o.label }}
+              </button>
             }
-          </tbody>
-        </table>
+          </div>
+        </div>
+
+        @if (yearState.isPast() && listSpan() !== 'all') {
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <svg viewBox="0 0 20 20" class="w-5 h-5 shrink-0 text-amber-600" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <circle cx="10" cy="10" r="7" /><path d="M10 6.5V10l2.5 1.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span class="grow">
+              กำลังดูข้อมูล<b>ปีงบประมาณย้อนหลัง</b> ({{ selectedYear() }}) — ยังแก้ไขข้อมูลได้ตามปกติ
+            </span>
+            <button
+              type="button"
+              class="px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-xs font-bold text-amber-800 hover:bg-amber-100"
+              (click)="yearState.resetToCurrent()"
+            >
+              กลับไปปีปัจจุบัน ({{ yearState.currentYear }})
+            </button>
+          </div>
+        }
+
+        <!-- Status chips: count per status, click to filter -->
+        <div class="flex gap-2 overflow-x-auto -mx-4 px-4 pb-1 sm:mx-0 sm:px-0 sm:pb-0 sm:grid sm:grid-cols-3 lg:grid-cols-6 sm:gap-2.5">
+          <button
+            type="button"
+            class="shrink-0 min-w-28 sm:min-w-0 text-left rounded-xl border px-3.5 py-2.5 sm:px-4 sm:py-3 transition-all outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+            [class]="statusFilter() === null ? 'bg-slate-900 border-slate-900 text-white shadow-md' : 'bg-white border-slate-200 text-slate-900 hover:border-slate-300 hover:shadow-sm'"
+            [attr.aria-pressed]="statusFilter() === null"
+            (click)="statusFilter.set(null)"
+          >
+            <div class="text-xs font-medium" [class]="statusFilter() === null ? 'text-slate-300' : 'text-slate-500'">ทั้งหมด</div>
+            <div class="mt-0.5 text-xl sm:text-2xl font-bold">{{ counts().all }}</div>
+          </button>
+          @for (s of statusList; track s.value) {
+            <button
+              type="button"
+              class="shrink-0 min-w-28 sm:min-w-0 text-left rounded-xl border px-3.5 py-2.5 sm:px-4 sm:py-3 transition-all outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+              [class]="statusFilter() === s.value ? 'shadow-md' : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm'"
+              [style.background]="statusFilter() === s.value ? s.bg : null"
+              [style.border-color]="statusFilter() === s.value ? s.dot : null"
+              [attr.aria-pressed]="statusFilter() === s.value"
+              (click)="toggleStatus(s.value)"
+            >
+              <div class="flex items-center gap-1.5 text-xs font-medium text-slate-500 whitespace-nowrap" [style.color]="statusFilter() === s.value ? s.text : null">
+                <span class="w-2 h-2 rounded-full" [style.background]="s.dot"></span>{{ s.label }}
+              </div>
+              <div class="mt-0.5 text-xl sm:text-2xl font-bold text-slate-900" [style.color]="statusFilter() === s.value ? s.text : null">{{ counts()[s.value] }}</div>
+            </button>
+          }
+        </div>
+
+        <!-- Filters -->
+        <div class="flex flex-wrap items-center gap-2.5">
+          <label class="flex items-center gap-2 border border-slate-200 rounded-xl px-3 py-2 bg-white w-full sm:w-72 shadow-sm focus-within:ring-2 focus-within:ring-blue-500/40 focus-within:border-blue-400">
+            <svg viewBox="0 0 20 20" class="w-4 h-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <circle cx="9" cy="9" r="5.5" /><path d="M13 13l3.5 3.5" stroke-linecap="round" />
+            </svg>
+            <input
+              type="text"
+              placeholder="ค้นหาโครงการ, กิจกรรม, ผู้รับผิดชอบ"
+              aria-label="ค้นหา"
+              class="bg-transparent outline-none text-sm w-full"
+              [(ngModel)]="search"
+            />
+            @if (search()) {
+              <button type="button" class="shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="ล้างคำค้นหา" (click)="search.set('')">
+                <svg viewBox="0 0 20 20" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M6 6l8 8M14 6l-8 8" stroke-linecap="round" />
+                </svg>
+              </button>
+            }
+          </label>
+          <select
+            class="border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+            [class]="monthFilter() !== null ? 'text-blue-700 border-blue-300' : 'text-slate-700'"
+            aria-label="กรองตามเดือน"
+            [(ngModel)]="monthFilter"
+          >
+            <option [ngValue]="null">ทุกเดือน</option>
+            @for (m of monthOptions(); track m.value) {
+              <option [ngValue]="m.value">{{ m.label }}</option>
+            }
+          </select>
+          <select
+            class="border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+            [class]="typeFilter() !== null ? 'text-blue-700 border-blue-300' : 'text-slate-700'"
+            aria-label="กรองตามประเภท"
+            [(ngModel)]="typeFilter"
+          >
+            <option [ngValue]="null">ทุกประเภท</option>
+            @for (t of workTypes; track t) {
+              <option [ngValue]="t">{{ t }}</option>
+            }
+          </select>
+          @if (filtering()) {
+            <button type="button" class="px-3 py-2 rounded-xl text-sm font-semibold text-slate-600 hover:bg-white hover:text-slate-900" (click)="clearFilters()">
+              ล้างตัวกรอง
+            </button>
+          }
+          <div class="grow"></div>
+          <span class="text-sm text-slate-500">แสดง {{ visiblePlans().length }} โครงการ</span>
+          @if (expandablePlans().length > 0) {
+            <button type="button" class="px-3 py-2 rounded-xl text-sm font-semibold text-blue-600 hover:bg-blue-50" (click)="toggleAll()">
+              {{ allExpanded() ? 'ย่อทั้งหมด' : 'ขยายทั้งหมด' }}
+            </button>
+          }
+        </div>
+
+        @if (visiblePlans().length > 0) {
+          <app-plan-table
+            [groups]="groups()"
+            [expandedIds]="expandedIds()"
+            [showGroupHeaders]="listSpan() !== 1"
+            [currentYear]="yearState.currentYear"
+            (edit)="openEdit($event)"
+            (remove)="deleteTarget.set($event)"
+            (toggle)="toggleExpanded($event)"
+          />
+        } @else {
+          <div class="bg-white border border-dashed border-slate-300 rounded-2xl px-6 py-14 flex flex-col items-center text-center gap-3">
+            <span class="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center">
+              <svg viewBox="0 0 20 20" class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                @if (filtering()) {
+                  <circle cx="9" cy="9" r="5.5" /><path d="M13 13l3.5 3.5" stroke-linecap="round" />
+                } @else {
+                  <rect x="3.5" y="3.5" width="13" height="13" rx="2.5" /><path d="M7 8h6M7 11h6M7 14h3" stroke-linecap="round" />
+                }
+              </svg>
+            </span>
+            @if (filtering()) {
+              <div class="font-semibold text-slate-700">ไม่พบโครงการที่ตรงกับตัวกรอง</div>
+              <p class="text-sm text-slate-500">ลองเปลี่ยนคำค้นหาหรือเงื่อนไข หรือดูช่วงปีงบประมาณอื่น</p>
+              <button type="button" class="mt-1 px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50" (click)="clearFilters()">
+                ล้างตัวกรอง
+              </button>
+            } @else {
+              <div class="font-semibold text-slate-700">ยังไม่มีโครงการใน{{ listSpan() === 1 ? 'ปีงบประมาณ ' + selectedYear() : 'ช่วงปีที่เลือก' }}</div>
+              <p class="text-sm text-slate-500">เริ่มเพิ่มโครงการแรก หรือเลือกปีงบประมาณอื่นจากแถบด้านบน</p>
+              <button type="button" class="mt-1 px-4 py-2 rounded-xl bg-blue-600 text-sm font-bold text-white shadow-sm shadow-blue-600/30 hover:bg-blue-700" (click)="openAdd()">
+                + เพิ่มโครงการ
+              </button>
+            }
+          </div>
+        }
       </div>
     </div>
 
@@ -213,14 +246,17 @@ import {
 export class PlanList {
   readonly workPlanService = inject(WorkPlanService);
   readonly exportImportService = inject(ExportImportService);
+  readonly yearState = inject(FiscalYearStateService);
 
   readonly statusList = STATUS_LIST;
   readonly workTypes = WORK_TYPES;
+  readonly spanOptions = SPAN_OPTIONS;
 
-  selectedYear = signal(currentFiscalYear());
+  readonly selectedYear = this.yearState.year;
+  readonly listSpan = this.yearState.listSpan;
   search = signal('');
   monthFilter = signal<number | null>(null);
-  statusFilter = signal<WorkPlan['status'] | null>(null);
+  statusFilter = signal<WorkStatus | null>(null);
   typeFilter = signal<string | null>(null);
 
   formOpen = signal(false);
@@ -229,28 +265,40 @@ export class PlanList {
   importPending = signal<WorkPlan[] | null>(null);
   expandedIds = signal<ReadonlySet<string>>(new Set());
 
-  filteredPlans = computed(() => {
-    const keyword = this.search().trim().toLowerCase();
-    const month = this.monthFilter();
-    const status = this.statusFilter();
-    const type = this.typeFilter();
+  private filters = computed<PlanFilters>(() => ({
+    keyword: this.search(),
+    month: this.monthFilter(),
+    status: this.statusFilter(),
+    type: this.typeFilter(),
+  }));
 
-    return this.workPlanService
-      .plans()
-      .filter((p) => p.year === this.selectedYear())
-      .filter(
-        (p) =>
-          !keyword ||
-          p.name.toLowerCase().includes(keyword) ||
-          p.responsible.toLowerCase().includes(keyword) ||
-          (p.activities ?? []).some((a) => a.name.toLowerCase().includes(keyword)),
-      )
-      .filter((p) => !month || this.monthInRange(p, month))
-      .filter((p) => !status || p.status === status)
-      .filter((p) => !type || p.type === type);
+  filtering = computed(() => hasActiveFilters(this.filters()));
+
+  private viewYears = computed(() =>
+    fiscalYearsInView(this.selectedYear(), this.listSpan(), this.workPlanService.yearsWithPlans()),
+  );
+
+  groups = computed(() => buildPlanGroups(this.workPlanService.plans(), this.viewYears(), this.filters()));
+
+  visiblePlans = computed(() => this.groups().flatMap((g) => g.rows.map((r) => r.plan)));
+
+  counts = computed(() => countByStatus(this.workPlanService.plans(), this.viewYears(), this.filters()));
+
+  subtitle = computed(() => {
+    const year = this.selectedYear();
+    const years = this.viewYears();
+    const oldest = years[years.length - 1];
+    switch (this.listSpan()) {
+      case 1:
+        return `ปีงบประมาณ ${year} (${fiscalYearRangeLabel(year)}) · รวมโครงการต่อเนื่องจากปีก่อน`;
+      case 'all':
+        return years.length > 1 ? `ทุกปีงบประมาณ (${oldest} – ${years[0]})` : `ทุกปีงบประมาณ (${years[0]})`;
+      default:
+        return `ย้อนหลัง ${years.length} ปีงบประมาณ (${oldest} – ${year}) · แยกตามปีที่เริ่มโครงการ`;
+    }
   });
 
-  expandablePlans = computed(() => this.filteredPlans().filter((p) => this.countActivities(p) > 0));
+  expandablePlans = computed(() => this.visiblePlans().filter((p) => (p.activities?.length ?? 0) > 0));
 
   allExpanded = computed(() => {
     const ids = this.expandedIds();
@@ -258,26 +306,25 @@ export class PlanList {
     return expandable.length > 0 && expandable.every((p) => ids.has(p.id));
   });
 
-  // The months of the selected fiscal year, October first; the value is the month's position (1 = October).
-  monthOptions = computed(() =>
-    fiscalMonths(this.selectedYear()).map((m, i) => ({ value: i + 1, label: `${THAI_MONTHS_FULL[m.month]} ${m.year + 543}` })),
-  );
+  // The months of the fiscal year, October first; the value is the month's position (1 = October).
+  // Across several years the month is read within each project's group, so only its name is shown.
+  monthOptions = computed(() => {
+    const single = this.listSpan() === 1;
+    return fiscalMonths(this.selectedYear()).map((m, i) => ({
+      value: i + 1,
+      label: single ? `${THAI_MONTHS_FULL[m.month]} ${m.year + 543}` : THAI_MONTHS_FULL[m.month],
+    }));
+  });
 
-  readonly fiscalRange = fiscalYearRangeLabel;
-  readonly progress = todoProgress;
-  formatDate = formatDateShort;
-  formatMonth = formatMonthYearShort;
-
-  countActivities(p: WorkPlan): number {
-    return p.activities?.length ?? 0;
+  toggleStatus(status: WorkStatus): void {
+    this.statusFilter.update((current) => (current === status ? null : status));
   }
 
-  countDone(p: WorkPlan): number {
-    return p.activities?.filter((a) => a.status === 'completed').length ?? 0;
-  }
-
-  isExpanded(id: string): boolean {
-    return this.expandedIds().has(id);
+  clearFilters(): void {
+    this.search.set('');
+    this.monthFilter.set(null);
+    this.statusFilter.set(null);
+    this.typeFilter.set(null);
   }
 
   toggleAll(): void {
@@ -299,11 +346,6 @@ export class PlanList {
       if (!next.delete(id)) next.add(id);
       return next;
     });
-  }
-
-  private monthInRange(p: WorkPlan, month: number): boolean {
-    const span = monthSpanInFiscalYear(p.startDate, p.endDate, this.selectedYear());
-    return !!span && month >= span[0] && month <= span[1];
   }
 
   openAdd(): void {
@@ -329,10 +371,6 @@ export class PlanList {
       this.workPlanService.add(input);
     }
     this.closeForm();
-  }
-
-  askDelete(plan: WorkPlan): void {
-    this.deleteTarget.set(plan);
   }
 
   confirmDelete(): void {

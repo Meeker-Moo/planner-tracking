@@ -3,11 +3,11 @@ import { Toolbar } from '../../shared/components/toolbar/toolbar';
 import { StatusBadge } from '../../shared/components/status-badge/status-badge';
 import { PlanFormDialog } from '../plan-list/plan-form-dialog/plan-form-dialog';
 import { WorkPlanService } from '../../core/services/work-plan.service';
+import { FiscalYearStateService } from '../../core/services/fiscal-year-state.service';
 import { ExportImportService } from '../../core/services/export-import.service';
 import { STATUS_LIST, THAI_MONTHS, STATUS_MAP } from '../../core/models/status.constant';
 import { Activity, WorkPlan, WorkPlanInput, WorkStatus } from '../../core/models/work-plan.model';
 import {
-  currentFiscalYear,
   fiscalMonths,
   fiscalYearRangeLabel,
   fiscalYearSpanLabel,
@@ -221,7 +221,8 @@ export class Timeline {
 
   private readonly today = todayIso();
 
-  selectedYear = signal(currentFiscalYear());
+  /** Shared with the other pages, so the year chosen here stays chosen when moving between them. */
+  readonly selectedYear = inject(FiscalYearStateService).year;
   formOpen = signal(false);
   importPending = signal<WorkPlan[] | null>(null);
   tip = signal<TipPlacement | null>(null);

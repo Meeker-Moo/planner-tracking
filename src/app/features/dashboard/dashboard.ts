@@ -1,9 +1,9 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { Toolbar } from '../../shared/components/toolbar/toolbar';
 import { WorkPlanService } from '../../core/services/work-plan.service';
+import { FiscalYearStateService } from '../../core/services/fiscal-year-state.service';
 import { STATUS_LIST, STATUS_MAP, THAI_MONTHS } from '../../core/models/status.constant';
 import {
-  currentFiscalYear,
   fiscalYearRangeLabel,
   formatMonthYearShort,
   todayIso,
@@ -221,7 +221,8 @@ export class Dashboard {
 
   private readonly today = todayIso();
 
-  selectedYear = signal(currentFiscalYear());
+  /** Shared with the other pages, so the year chosen here stays chosen when moving between them. */
+  readonly selectedYear = inject(FiscalYearStateService).year;
 
   summary = computed(() => summarizeYear(this.workPlanService.plans(), this.selectedYear(), this.today));
 
