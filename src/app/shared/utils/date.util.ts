@@ -159,6 +159,31 @@ export function monthGridColumn(
   return span ? `${span[0] + 1} / ${span[1] + 2}` : null;
 }
 
+// ---------- quarters (ไตรมาส) ----------
+// Quarters of the fiscal year: 1 is October–December, 2 January–March, 3 April–June, 4 July–September.
+
+export const QUARTERS = [1, 2, 3, 4];
+
+/** The first and last month of a quarter, counted 1 = October … 12 = September as in monthSpanInFiscalYear. */
+export function quarterMonths(quarter: number): [number, number] {
+  return [quarter * 3 - 2, quarter * 3];
+}
+
+/** Whether a date range runs in some part of a quarter of a fiscal year. */
+export function overlapsQuarter(startDate: string, endDate: string, fiscalYear: number, quarter: number): boolean {
+  const span = monthSpanInFiscalYear(startDate, endDate, fiscalYear);
+  const [first, last] = quarterMonths(quarter);
+  return !!span && span[0] <= last && span[1] >= first;
+}
+
+/** "ต.ค. – ธ.ค." for a quarter, followed by the Buddhist year its months fall in when a fiscal year is given. */
+export function quarterMonthsLabel(quarter: number, fiscalYear?: number): string {
+  const first = (9 + (quarter - 1) * 3) % 12;
+  const label = `${THAI_MONTHS[first]} – ${THAI_MONTHS[first + 2]}`;
+  // Only the first quarter (October–December) falls in the calendar year before the fiscal year ends.
+  return fiscalYear === undefined ? label : `${label} ${quarter === 1 ? fiscalYear - 1 : fiscalYear}`;
+}
+
 /** "2569" for a range inside one fiscal year, "2569 – 2570 (คาบเกี่ยว 2 ปีงบ)" when it spans several. */
 export function fiscalYearSpanLabel(startDate: string, endDate: string): string {
   const first = fiscalYearOf(startDate);

@@ -67,7 +67,26 @@ describe('buildTimelineLayout', () => {
   });
 
   it('is an empty axis of the selected year with no projects', () => {
-    expect(buildTimelineLayout([], 2570)).toEqual({ firstYear: 2570, lastYear: 2570, rows: [] });
+    expect(buildTimelineLayout([], 2570)).toEqual({ firstYear: 2570, lastYear: 2570, monthOffset: 0, monthCount: 12, rows: [] });
+  });
+
+  it('shows a quarter as its three months, with only the sub-activities that run in it', () => {
+    const p = plan({
+      // September 2025 (FY 2568) to December 2026 (FY 2570): the axis must not widen in quarter view.
+      startDate: '2025-09-01',
+      endDate: '2026-12-31',
+      activities: [
+        { id: 'a', name: 'ก.พ.–พ.ค.', startDate: '2026-02-01', endDate: '2026-05-15', status: 'in-progress' },
+        { id: 'b', name: 'ส.ค.', startDate: '2026-08-01', endDate: '2026-08-31', status: 'planned' },
+      ],
+    });
+    const layout = buildTimelineLayout([p], 2569, 2);
+    expect([layout.firstYear, layout.lastYear, layout.monthOffset, layout.monthCount]).toEqual([2569, 2569, 3, 3]);
+    // January to March fill the axis; the activity from February is cut at the end of March.
+    expect(layout.rows.map((r) => [r.name, r.span])).toEqual([
+      ['โครงการ', [1, 3]],
+      ['ก.พ.–พ.ค.', [2, 3]],
+    ]);
   });
 });
 

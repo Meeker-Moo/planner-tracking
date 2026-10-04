@@ -77,6 +77,23 @@ export function compareCells(a: CellValue, b: CellValue): number {
   return collator.compare(ta, tb);
 }
 
+/** What the result table is narrowed and ordered by. */
+export interface RowQuery {
+  search: string;
+  filters: ColumnFilter[];
+  sort: SortState | null;
+}
+
+/** The rows a query keeps, in its order. Never sorts `rows` itself. */
+export function queryRows<T extends { values: CellValue[] }>(rows: T[], query: RowQuery): T[] {
+  const narrowed = query.search.trim() !== '' || query.filters.length > 0;
+  const kept = narrowed ? rows.filter((r) => rowMatches(r.values, query.search, query.filters)) : rows;
+  const sort = query.sort;
+  if (!sort) return kept;
+  const dir = sort.dir === 'asc' ? 1 : -1;
+  return (narrowed ? kept : kept.slice()).sort((a, b) => compareCells(a.values[sort.column] ?? null, b.values[sort.column] ?? null) * dir);
+}
+
 /** A short description of a filter for its chip, e.g. `แผนก มีคำว่า "บัญชี"`. */
 export function describeFilter(filter: ColumnFilter, headers: string[]): string {
   const meta = FILTER_OP[filter.op];

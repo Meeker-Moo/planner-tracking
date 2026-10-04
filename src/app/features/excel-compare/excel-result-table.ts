@@ -14,21 +14,24 @@ import {
 import { cellText, CellValue, MATCH_STATUS, MatchStatus, TableRow } from './excel-compare.util';
 import {
   ColumnFilter,
-  compareCells,
   describeFilter,
   FILTER_OP,
   FILTER_OP_LIST,
   FilterOp,
-  rowMatches,
+  queryRows,
+  RowQuery,
   SortState,
 } from './excel-filter.util';
 
 const PAGE_SIZES = [25, 50, 100, 500];
 /** How many distinct values of a column the filter box suggests. */
 const MAX_SUGGESTIONS = 100;
+/** Searching a large table takes a while, so it waits for a pause in typing. */
+const SEARCH_DELAY_MS = 250;
 
 export interface FilteredExport {
-  rows: TableRow[];
+  /** Gives the rows on screen when run on the same rows. */
+  query: RowQuery;
   /** The columns left visible, in order. */
   columns: number[];
 }
@@ -57,7 +60,7 @@ export interface FilteredExport {
             aria-label="ค้นหาในทุกคอลัมน์"
             class="w-full border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
             [value]="search()"
-            (input)="search.set($any($event.target).value); page.set(0)"
+            (input)="onSearch($any($event.target).value)"
           />
         </label>
 
@@ -112,7 +115,7 @@ export interface FilteredExport {
           class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl ring-1 ring-emerald-200 bg-emerald-50 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-40"
           [disabled]="filtered().length === 0"
           title="ส่งออกเฉพาะแถวและคอลัมน์ที่แสดงอยู่ตามตัวกรอง"
-          (click)="exportFiltered.emit({ rows: filtered(), columns: visibleColumns() })"
+          (click)="exportFiltered.emit({ query: query(), columns: visibleColumns() })"
         >
           <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
             <path d="M10 3v10M6 9l4 4 4-4M4 13v2.5A1.5 1.5 0 005.5 17h9a1.5 1.5 0 001.5-1.5V13" stroke-linecap="round" stroke-linejoin="round" />
@@ -172,7 +175,7 @@ export interface FilteredExport {
         </div>
       }
 
-      @if (filters().length || search().trim()) {
+      @if (filters().length || appliedSearch().trim()) {
         <div class="px-4 py-2.5 border-b border-slate-100 flex flex-wrap items-center gap-2">
           @for (f of filters(); track $index) {
             <span class="inline-flex items-center gap-1 pl-2.5 pr-1 py-1 rounded-lg bg-blue-50 ring-1 ring-blue-200 text-xs font-semibold text-blue-800">
@@ -189,8 +192,8 @@ export interface FilteredExport {
               </button>
             </span>
           }
-          @if (search().trim()) {
-            <span class="inline-flex items-center pl-2.5 pr-2.5 py-1 rounded-lg bg-slate-100 text-xs font-semibold text-slate-700">ค้นหา "{{ search().trim() }}"</span>
+          @if (appliedSearch().trim()) {
+            <span class="inline-flex items-center pl-2.5 pr-2.5 py-1 rounded-lg bg-slate-100 text-xs font-semibold text-slate-700">ค้นหา "{{ appliedSearch().trim() }}"</span>
           }
           <button type="button" class="text-xs font-semibold text-red-600 hover:text-red-700 ml-1" (click)="clearFilters()">ล้างตัวกรองทั้งหมด</button>
           <span class="ml-auto text-xs text-slate-500 tabular-nums">พบ {{ filtered().length }} จาก {{ rows().length }} แถว</span>
@@ -267,7 +270,7 @@ export interface FilteredExport {
               <tr>
                 <td [attr.colspan]="visibleColumns().length + 2" class="px-3 py-12 text-center">
                   <div class="text-sm font-semibold text-slate-500">ไม่มีแถวที่ตรงกับตัวกรอง</div>
-                  @if (filters().length || search().trim()) {
+                  @if (filters().length || appliedSearch().trim()) {
                     <button type="button" class="mt-2 text-sm font-semibold text-blue-600 hover:text-blue-700" (click)="clearFilters()">ล้างตัวกรอง</button>
                   }
                 </td>
@@ -334,7 +337,9 @@ export class ExcelResultTable {
   readonly ops = FILTER_OP_LIST;
   readonly pageSizes = PAGE_SIZES;
 
+  /** What is typed in the search box; the table is searched for `appliedSearch` once typing pauses. */
   search = signal('');
+  appliedSearch = signal('');
   filters = signal<ColumnFilter[]>([]);
   draft = signal<ColumnFilter | null>(null);
   sort = signal<SortState | null>(null);
@@ -345,6 +350,7 @@ export class ExcelResultTable {
 
   private readonly columnsRoot = viewChild<ElementRef<HTMLElement>>('columnsRoot');
   private readonly draftValue = viewChild<ElementRef<HTMLInputElement>>('draftValue');
+  private searchTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** Changes only when the columns themselves change, not when the same columns get new rows. */
   private readonly shape = computed(() => this.headers().join('\u0001'));
@@ -358,7 +364,7 @@ export class ExcelResultTable {
         this.draft.set(null);
         this.sort.set(null);
         this.hidden.set(new Set());
-        this.search.set('');
+        this.setSearch('');
       });
     });
     effect(() => {
@@ -374,24 +380,20 @@ export class ExcelResultTable {
 
   visibleColumns = computed(() => this.headers().flatMap((_, i) => (this.hidden().has(i) ? [] : [i])));
 
-  filtered = computed(() => {
-    const search = this.search();
-    const filters = this.filters();
-    const rows = this.rows().filter((r) => rowMatches(r.values, search, filters));
-    const sort = this.sort();
-    if (!sort) return rows;
-    const dir = sort.dir === 'asc' ? 1 : -1;
-    return rows.sort((a, b) => compareCells(a.values[sort.column] ?? null, b.values[sort.column] ?? null) * dir);
-  });
+  query = computed<RowQuery>(() => ({ search: this.appliedSearch(), filters: this.filters(), sort: this.sort() }));
+
+  filtered = computed(() => queryRows(this.rows(), this.query()));
 
   pageCount = computed(() => Math.max(1, Math.ceil(this.filtered().length / this.pageSize())));
   currentPage = computed(() => Math.min(this.page(), this.pageCount() - 1));
   pageStart = computed(() => this.currentPage() * this.pageSize());
   pageRows = computed(() => this.filtered().slice(this.pageStart(), this.pageStart() + this.pageSize()));
 
-  /** Distinct values of the column being filtered, most common first, for the value box to suggest. */
+  private readonly draftColumn = computed(() => this.draft()?.column);
+
+  /** Distinct values of the column being filtered, most common first; counted again only when the column changes. */
   suggestions = computed(() => {
-    const column = this.draft()?.column;
+    const column = this.draftColumn();
     if (column === undefined) return [];
     const counts = new Map<string, number>();
     for (const row of this.rows()) {
@@ -489,7 +491,22 @@ export class ExcelResultTable {
 
   clearFilters(): void {
     this.filters.set([]);
-    this.search.set('');
+    this.setSearch('');
     this.page.set(0);
+  }
+
+  onSearch(text: string): void {
+    this.search.set(text);
+    clearTimeout(this.searchTimer);
+    this.searchTimer = setTimeout(() => {
+      this.appliedSearch.set(text);
+      this.page.set(0);
+    }, SEARCH_DELAY_MS);
+  }
+
+  private setSearch(text: string): void {
+    clearTimeout(this.searchTimer);
+    this.search.set(text);
+    this.appliedSearch.set(text);
   }
 }

@@ -129,7 +129,7 @@ describe('excel compare', () => {
 
   it('suggests a key from a shared header, else the first columns', () => {
     expect(suggestKeys(base, lookup)).toEqual([{ base: 0, lookup: 0, mode: 'equals' }]);
-    expect(suggestKeys({ headers: ['x', 'ชื่อ'], rows: [] }, lookup)).toEqual([{ base: 1, lookup: 2, mode: 'equals' }]);
-    expect(suggestKeys({ headers: ['x'], rows: [] }, { headers: ['y'], rows: [] })).toEqual([{ base: 0, lookup: 0, mode: 'equals' }]);
+    expect(suggestKeys({ headers: ['x', 'ชื่อ'] }, lookup)).toEqual([{ base: 1, lookup: 2, mode: 'equals' }]);
+    expect(suggestKeys({ headers: ['x'] }, { headers: ['y'] })).toEqual([{ base: 0, lookup: 0, mode: 'equals' }]);
   });
 });

@@ -9,7 +9,7 @@ import { ExportImportService } from '../../core/services/export-import.service';
 import { FiscalYearStateService, ListSpan } from '../../core/services/fiscal-year-state.service';
 import { STATUS_LIST, THAI_MONTHS_FULL, WORK_TYPES } from '../../core/models/status.constant';
 import { WorkPlan, WorkPlanInput, WorkStatus } from '../../core/models/work-plan.model';
-import { fiscalMonths, fiscalYearRangeLabel } from '../../shared/utils/date.util';
+import { QUARTERS, fiscalMonths, fiscalYearRangeLabel, quarterMonths, quarterMonthsLabel } from '../../shared/utils/date.util';
 import { PlanFilters, buildPlanGroups, countByStatus, fiscalYearsInView, hasActiveFilters } from './plan-list.util';
 
 const SPAN_OPTIONS: { value: ListSpan; label: string }[] = [
@@ -131,6 +131,19 @@ const SPAN_OPTIONS: { value: ListSpan; label: string }[] = [
           </label>
           <select
             class="border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+            [class]="quarterFilter() !== null ? 'text-blue-700 border-blue-300' : 'text-slate-700'"
+            aria-label="กรองตามไตรมาส"
+            title="แสดงโครงการที่มีกิจกรรมย่อยในไตรมาสที่เลือก"
+            [ngModel]="quarterFilter()"
+            (ngModelChange)="setQuarter($event)"
+          >
+            <option [ngValue]="null">ทุกไตรมาส</option>
+            @for (q of quarterOptions(); track q.value) {
+              <option [ngValue]="q.value">{{ q.label }}</option>
+            }
+          </select>
+          <select
+            class="border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
             [class]="monthFilter() !== null ? 'text-blue-700 border-blue-300' : 'text-slate-700'"
             aria-label="กรองตามเดือน"
             [(ngModel)]="monthFilter"
@@ -158,7 +171,7 @@ const SPAN_OPTIONS: { value: ListSpan; label: string }[] = [
           }
           <div class="grow"></div>
           <span class="text-sm text-slate-500">แสดง {{ visiblePlans().length }} โครงการ</span>
-          @if (expandablePlans().length > 0) {
+          @if (expandableIds().length > 0) {
             <button type="button" class="px-3 py-2 rounded-xl text-sm font-semibold text-blue-600 hover:bg-blue-50" (click)="toggleAll()">
               {{ allExpanded() ? 'ย่อทั้งหมด' : 'ขยายทั้งหมด' }}
             </button>
@@ -256,6 +269,7 @@ export class PlanList {
   readonly listSpan = this.yearState.listSpan;
   search = signal('');
   monthFilter = signal<number | null>(null);
+  quarterFilter = signal<number | null>(null);
   statusFilter = signal<WorkStatus | null>(null);
   typeFilter = signal<string | null>(null);
 
@@ -268,6 +282,7 @@ export class PlanList {
   private filters = computed<PlanFilters>(() => ({
     keyword: this.search(),
     month: this.monthFilter(),
+    quarter: this.quarterFilter(),
     status: this.statusFilter(),
     type: this.typeFilter(),
   }));
@@ -298,23 +313,50 @@ export class PlanList {
     }
   });
 
-  expandablePlans = computed(() => this.visiblePlans().filter((p) => (p.activities?.length ?? 0) > 0));
+  // Projects with sub-activities to show (with a quarter chosen, only those in the quarter count).
+  expandableIds = computed(() =>
+    this.groups()
+      .flatMap((g) => g.rows)
+      .filter((r) => r.activities.length > 0)
+      .map((r) => r.plan.id),
+  );
 
   allExpanded = computed(() => {
     const ids = this.expandedIds();
-    const expandable = this.expandablePlans();
-    return expandable.length > 0 && expandable.every((p) => ids.has(p.id));
+    const expandable = this.expandableIds();
+    return expandable.length > 0 && expandable.every((id) => ids.has(id));
   });
 
   // The months of the fiscal year, October first; the value is the month's position (1 = October).
   // Across several years the month is read within each project's group, so only its name is shown.
+  // With a quarter chosen, only its three months are offered.
   monthOptions = computed(() => {
     const single = this.listSpan() === 1;
-    return fiscalMonths(this.selectedYear()).map((m, i) => ({
-      value: i + 1,
-      label: single ? `${THAI_MONTHS_FULL[m.month]} ${m.year + 543}` : THAI_MONTHS_FULL[m.month],
-    }));
+    const quarter = this.quarterFilter();
+    const [first, last] = quarter ? quarterMonths(quarter) : [1, 12];
+    return fiscalMonths(this.selectedYear())
+      .map((m, i) => ({
+        value: i + 1,
+        label: single ? `${THAI_MONTHS_FULL[m.month]} ${m.year + 543}` : THAI_MONTHS_FULL[m.month],
+      }))
+      .filter((m) => m.value >= first && m.value <= last);
   });
+
+  // Like the months, a quarter names its months with the year only when one fiscal year is shown.
+  quarterOptions = computed(() => {
+    const year = this.listSpan() === 1 ? this.selectedYear() : undefined;
+    return QUARTERS.map((q) => ({ value: q, label: `ไตรมาส ${q} (${quarterMonthsLabel(q, year)})` }));
+  });
+
+  /** A month outside the new quarter could never match as well, so it is dropped. */
+  setQuarter(quarter: number | null): void {
+    this.quarterFilter.set(quarter);
+    const month = this.monthFilter();
+    if (quarter && month !== null) {
+      const [first, last] = quarterMonths(quarter);
+      if (month < first || month > last) this.monthFilter.set(null);
+    }
+  }
 
   toggleStatus(status: WorkStatus): void {
     this.statusFilter.update((current) => (current === status ? null : status));
@@ -323,12 +365,13 @@ export class PlanList {
   clearFilters(): void {
     this.search.set('');
     this.monthFilter.set(null);
+    this.quarterFilter.set(null);
     this.statusFilter.set(null);
     this.typeFilter.set(null);
   }
 
   toggleAll(): void {
-    const ids = this.expandablePlans().map((p) => p.id);
+    const ids = this.expandableIds();
     const collapse = this.allExpanded();
     this.expandedIds.update((current) => {
       const next = new Set(current);

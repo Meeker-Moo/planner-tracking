@@ -5,7 +5,7 @@ import { cellText, CellValue, columnLetter } from './excel-compare.util';
 const PREVIEW_COLUMNS = 8;
 
 /**
- * Picks one .xlsx file (button or drag-and-drop), then which sheet to use. A preview of the sheet's
+ * Picks one .xlsx, .xls or .csv file (button or drag-and-drop), then which sheet to use. A preview of the sheet's
  * first rows shows which row is taken as the headers; clicking another row makes that one the header row.
  */
 @Component({
@@ -44,13 +44,16 @@ const PREVIEW_COLUMNS = 8;
           @if (loading()) {
             <div class="w-8 h-8 rounded-full border-[3px] border-blue-200 border-t-blue-600 animate-spin" aria-hidden="true"></div>
             <span class="text-sm font-semibold text-slate-500">กำลังอ่านไฟล์…</span>
+            @if (loadingHint()) {
+              <span class="text-xs text-slate-400">{{ loadingHint() }}</span>
+            }
           } @else {
             <div class="w-12 h-12 rounded-2xl bg-white ring-1 ring-slate-200 flex items-center justify-center text-emerald-600 shadow-sm">
               <svg viewBox="0 0 24 24" class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                 <path d="M12 15V4M7.5 8.5L12 4l4.5 4.5M5 15v3a2 2 0 002 2h10a2 2 0 002-2v-3" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </div>
-            <div class="text-sm text-slate-600">ลากไฟล์ <b>.xlsx</b> มาวางที่นี่</div>
+            <div class="text-sm text-slate-600">ลากไฟล์ <b>.xlsx</b>, <b>.xls</b> หรือ <b>.csv</b> มาวางที่นี่</div>
             <button
               type="button"
               class="px-4 py-2 rounded-xl bg-blue-600 text-sm font-bold text-white shadow-sm shadow-blue-600/30 hover:bg-blue-700"
@@ -152,7 +155,7 @@ const PREVIEW_COLUMNS = 8;
       <input
         #fileInput
         type="file"
-        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
         class="hidden"
         (change)="onFileSelected($event)"
       />
@@ -170,6 +173,8 @@ export class ExcelFileCard {
   rowCount = input(0);
   columnCount = input(0);
   loading = input(false);
+  /** Shown under the spinner, e.g. that a large file takes a while. */
+  loadingHint = input('');
   /** The first rows of the chosen sheet as they are in the file, header row included. */
   previewRows = input<CellValue[][]>([]);
 

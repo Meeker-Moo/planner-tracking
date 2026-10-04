@@ -140,7 +140,8 @@ export function toTable(sheet: SheetData, headerRow: number): Table {
   const body = sheet.rows.slice(headerIndex + 1).filter((r) => !isBlankRow(r));
   const width = body.reduce((w, r) => Math.max(w, r.length), headerCells.length);
   const headers = Array.from({ length: width }, (_, i) => cellText(headerCells[i] ?? null).trim() || `คอลัมน์ ${columnLetter(i)}`);
-  const rows = body.map((r) => Array.from({ length: width }, (_, i) => r[i] ?? null));
+  // Rows that already have every column are kept as they are, so a large sheet is not copied twice.
+  const rows = body.map((r) => (r.length === width ? r : Array.from({ length: width }, (_, i) => r[i] ?? null)));
   return { headers, rows };
 }
 
@@ -228,11 +229,30 @@ export function compareTables(base: Table, lookup: Table, options: CompareOption
  * The key to start with: the first base column whose header also names a column of the comparison file,
  * or the first column of each file when no header is shared.
  */
-export function suggestKeys(base: Table, lookup: Table): KeyPair[] {
+export function suggestKeys(base: Pick<Table, 'headers'>, lookup: Pick<Table, 'headers'>): KeyPair[] {
   const normalized = lookup.headers.map((h) => h.trim().toLocaleLowerCase());
   for (let b = 0; b < base.headers.length; b++) {
     const l = normalized.indexOf(base.headers[b].trim().toLocaleLowerCase());
     if (l >= 0) return [{ base: b, lookup: l, mode: 'equals' }];
   }
   return base.headers.length && lookup.headers.length ? [{ base: 0, lookup: 0, mode: 'equals' }] : [];
+}
+
+/** Which rows the result table shows: all of them, one status, or the comparison rows nothing matched. */
+export type ResultView = 'all' | MatchStatus | 'unmatched';
+
+export interface ResultViewData {
+  headers: string[];
+  rows: TableRow[];
+  addedFrom: number;
+  withStatus: boolean;
+}
+
+export function viewOf(result: CompareResult, lookupHeaders: string[], view: ResultView): ResultViewData {
+  if (view === 'unmatched') {
+    const rows = result.unmatchedLookup.map((values): TableRow => ({ values, status: null, matches: 0 }));
+    return { headers: lookupHeaders, rows, addedFrom: Infinity, withStatus: false };
+  }
+  const rows: TableRow[] = view === 'all' ? result.rows : result.rows.filter((row) => row.status === view);
+  return { headers: result.headers, rows, addedFrom: result.addedFrom, withStatus: true };
 }

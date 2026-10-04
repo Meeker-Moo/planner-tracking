@@ -8,6 +8,7 @@ import { ExportImportService } from '../../core/services/export-import.service';
 import { STATUS_LIST, THAI_MONTHS, STATUS_MAP } from '../../core/models/status.constant';
 import { Activity, WorkPlan, WorkPlanInput, WorkStatus } from '../../core/models/work-plan.model';
 import {
+  QUARTERS,
   fiscalMonths,
   fiscalYearRangeLabel,
   fiscalYearSpanLabel,
@@ -15,9 +16,10 @@ import {
   formatMonthYearThai,
   monthPositionInFiscalYears,
   monthSpanInFiscalYear,
+  quarterMonthsLabel,
   todayIso,
 } from '../../shared/utils/date.util';
-import { todoProgress } from '../../shared/utils/activity.util';
+import { planInQuarter, todoProgress } from '../../shared/utils/activity.util';
 import { buildTimelineLayout, elapsedBarBackground, elapsedFraction } from './timeline.util';
 
 const NAME_COLUMN_PX = 200;
@@ -85,10 +87,29 @@ function tipLines(lines: [string, string | undefined][]): TimelineTip['lines'] {
         <span class="w-3 h-3 rounded-sm border border-blue-300 bg-blue-100"></span>เดือนปัจจุบัน
       </span>
       <div class="grow"></div>
+      <div class="flex bg-slate-100 rounded-xl p-1 overflow-x-auto max-w-full" role="radiogroup" aria-label="ช่วงเวลาที่แสดง">
+        @for (o of quarterOptions(); track o.label) {
+          <button
+            type="button"
+            role="radio"
+            class="px-3 py-1 rounded-lg text-sm font-semibold whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+            [class]="quarter() === o.value ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'"
+            [attr.aria-checked]="quarter() === o.value"
+            [title]="o.title"
+            (click)="quarter.set(o.value)"
+          >
+            {{ o.label }}
+          </button>
+        }
+      </div>
       <span class="text-sm text-slate-500">
-        มุมมอง: รายเดือน ปีงบประมาณ {{ selectedYear() }} ({{ fiscalRange(selectedYear()) }})
-        @if (axis().last > axis().first) {
-          · แสดงต่อเนื่อง {{ axis().last - axis().first + 1 }} ปีงบ ({{ axis().first }} – {{ axis().last }})
+        @if (quarter(); as q) {
+          มุมมอง: ไตรมาส {{ q }} ปีงบประมาณ {{ selectedYear() }} ({{ quarterRange(q, selectedYear()) }}) · ตามกิจกรรมย่อย
+        } @else {
+          มุมมอง: รายเดือน ปีงบประมาณ {{ selectedYear() }} ({{ fiscalRange(selectedYear()) }})
+          @if (axis().last > axis().first) {
+            · แสดงต่อเนื่อง {{ axis().last - axis().first + 1 }} ปีงบ ({{ axis().first }} – {{ axis().last }})
+          }
         }
       </span>
     </div>
@@ -104,7 +125,7 @@ function tipLines(lines: [string, string | undefined][]): TimelineTip['lines'] {
                 [class]="g.selected ? 'bg-blue-50 text-blue-700' : 'text-slate-500'"
                 [style.grid-column]="g.gridColumn"
               >
-                ปีงบประมาณ {{ g.fiscalYear }}
+                {{ g.label }}
               </div>
             }
           </div>
@@ -156,7 +177,9 @@ function tipLines(lines: [string, string | undefined][]): TimelineTip['lines'] {
               }
             </div>
           } @empty {
-            <div class="px-4 py-12 text-center text-slate-400">ยังไม่มีโครงการในปีนี้</div>
+            <div class="px-4 py-12 text-center text-slate-400">
+              {{ quarter() ? 'ไม่มีกิจกรรมย่อยในไตรมาส ' + quarter() + ' ของปีงบประมาณนี้' : 'ยังไม่มีโครงการในปีนี้' }}
+            </div>
           }
         </div>
       </div>
@@ -215,6 +238,7 @@ export class Timeline {
 
   readonly statusList = STATUS_LIST;
   readonly fiscalRange = fiscalYearRangeLabel;
+  readonly quarterRange = quarterMonthsLabel;
   readonly tipWidth = TIP_WIDTH_PX;
   readonly swatchElapsed = elapsedBarBackground(LEGEND_SWATCH_COLOR, 1);
   readonly swatchUpcoming = elapsedBarBackground(LEGEND_SWATCH_COLOR, 0);
@@ -223,21 +247,35 @@ export class Timeline {
 
   /** Shared with the other pages, so the year chosen here stays chosen when moving between them. */
   readonly selectedYear = inject(FiscalYearStateService).year;
+  /** A quarter of the selected fiscal year to zoom in on, or null for the whole year. */
+  quarter = signal<number | null>(null);
   formOpen = signal(false);
   importPending = signal<WorkPlan[] | null>(null);
   tip = signal<TipPlacement | null>(null);
 
   plansInYear = computed(() => this.workPlanService.plans().filter((p) => p.year === this.selectedYear()));
 
-  // Projects that run during the selected fiscal year.
-  private visiblePlans = computed(() =>
-    this.workPlanService
-      .plans()
-      .filter((p) => monthSpanInFiscalYear(p.startDate, p.endDate, this.selectedYear()) !== null),
-  );
+  quarterOptions = computed(() => [
+    { value: null, label: 'ทั้งปี', title: 'ทั้งปีงบประมาณ' },
+    ...QUARTERS.map((q) => ({
+      value: q,
+      label: `Q${q}`,
+      title: `ไตรมาส ${q} (${quarterMonthsLabel(q, this.selectedYear())}) — โครงการที่มีกิจกรรมย่อยในไตรมาสนี้`,
+    })),
+  ]);
 
-  // The projects laid out on the axis: the selected fiscal year, widened to the whole span of each project shown.
-  private layout = computed(() => buildTimelineLayout(this.visiblePlans(), this.selectedYear()));
+  // Projects that run during the selected fiscal year, or, with a quarter chosen, that have a sub-activity in it.
+  private visiblePlans = computed(() => {
+    const year = this.selectedYear();
+    const quarter = this.quarter();
+    return this.workPlanService
+      .plans()
+      .filter((p) => (quarter ? planInQuarter(p, year, quarter) : monthSpanInFiscalYear(p.startDate, p.endDate, year) !== null));
+  });
+
+  // The projects laid out on the axis: the selected fiscal year, widened to the whole span of each project shown,
+  // or the three months of the chosen quarter.
+  private layout = computed(() => buildTimelineLayout(this.visiblePlans(), this.selectedYear(), this.quarter()));
 
   axis = computed(() => ({ first: this.layout().firstYear, last: this.layout().lastYear }));
 
@@ -246,14 +284,17 @@ export class Timeline {
     return Array.from({ length: last - first + 1 }, (_, i) => first + i);
   });
 
-  private monthCount = computed(() => this.fiscalYears().length * 12);
+  private monthCount = computed(() => this.layout().monthCount);
 
   gridColumns = computed(() => `${NAME_COLUMN_PX}px repeat(${this.monthCount()}, minmax(${MONTH_COLUMN_MIN_PX}px, 1fr))`);
 
   minWidth = computed(() => NAME_COLUMN_PX + this.monthCount() * MONTH_COLUMN_MIN_PX);
 
-  // Today's place on the axis in months from October of the first fiscal year (e.g. 11.6 = late September).
-  private todayPosition = computed(() => monthPositionInFiscalYears(this.today, this.axis().first) ?? -1);
+  // Today's place on the axis in months from its first month (e.g. 11.6 = late September on a full-year axis).
+  private todayPosition = computed(() => {
+    const position = monthPositionInFiscalYears(this.today, this.axis().first);
+    return position === null ? -1 : position - this.layout().monthOffset;
+  });
 
   private currentMonthIndex = computed(() => {
     const position = this.todayPosition();
@@ -276,25 +317,35 @@ export class Timeline {
     );
   });
 
-  fiscalGroups = computed(() =>
-    this.fiscalYears().map((fiscalYear, i) => ({
+  fiscalGroups = computed(() => {
+    const quarter = this.quarter();
+    if (quarter) {
+      const fiscalYear = this.selectedYear();
+      return [{ fiscalYear, label: `ปีงบประมาณ ${fiscalYear} · ไตรมาส ${quarter}`, selected: true, gridColumn: '2 / span 3' }];
+    }
+    return this.fiscalYears().map((fiscalYear, i) => ({
       fiscalYear,
+      label: `ปีงบประมาณ ${fiscalYear}`,
       selected: fiscalYear === this.selectedYear(),
       gridColumn: `${i * 12 + 2} / span 12`,
-    })),
-  );
+    }));
+  });
 
-  // Column headers: for each fiscal year, October of the previous calendar year first, then January to September.
+  // Column headers: for each fiscal year, October of the previous calendar year first, then January to September;
+  // with a quarter chosen, just its three months.
   monthHeaders = computed(() => {
+    const { monthOffset, monthCount } = this.layout();
     const current = this.currentMonthIndex();
-    return this.fiscalYears().flatMap((fiscalYear, yearIndex) =>
-      fiscalMonths(fiscalYear).map((m, i) => ({
-        label: THAI_MONTHS[m.month],
-        year: ((m.year + 543) % 100).toString().padStart(2, '0'),
-        firstOfYear: i === 0,
-        current: yearIndex * 12 + i === current,
-      })),
-    );
+    return this.fiscalYears()
+      .flatMap((fiscalYear) =>
+        fiscalMonths(fiscalYear).map((m, i) => ({
+          label: THAI_MONTHS[m.month],
+          year: ((m.year + 543) % 100).toString().padStart(2, '0'),
+          firstOfYear: i === 0,
+        })),
+      )
+      .slice(monthOffset, monthOffset + monthCount)
+      .map((m, i) => ({ ...m, firstOfYear: m.firstOfYear || i === 0, current: i === current }));
   });
 
   rows = computed(() =>

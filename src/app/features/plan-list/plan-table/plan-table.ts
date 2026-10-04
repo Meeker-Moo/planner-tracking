@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { StatusBadge } from '../../../shared/components/status-badge/status-badge';
-import { WorkPlan } from '../../../core/models/work-plan.model';
+import { Activity, WorkPlan } from '../../../core/models/work-plan.model';
 import { todoProgress } from '../../../shared/utils/activity.util';
 import {
   fiscalYearOf,
@@ -10,7 +10,7 @@ import {
   formatDateShort,
   formatMonthYearShort,
 } from '../../../shared/utils/date.util';
-import { PlanGroup } from '../plan-list.util';
+import { PlanGroup, PlanRow } from '../plan-list.util';
 
 /** The project list itself: a table on wide screens, cards on phones; grouped by fiscal year when it covers several. */
 @Component({
@@ -54,7 +54,7 @@ import { PlanGroup } from '../plan-list.util';
               <tr class="border-b border-slate-100 last:border-b-0 hover:bg-blue-50/40 transition-colors">
                 <td class="px-4 py-3.5 align-top">
                   <div class="flex items-start gap-2">
-                    @if (activityCount(item) > 0) {
+                    @if (row.activities.length > 0) {
                       <button
                         type="button"
                         class="mt-0.5 w-6 h-6 shrink-0 flex items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-blue-600 outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
@@ -85,16 +85,16 @@ import { PlanGroup } from '../plan-list.util';
                           ต่อเนื่องจากปีงบ {{ row.carriedFrom }}
                         </span>
                       }
-                      @if (activityCount(item) > 0) {
+                      @if (row.activities.length > 0) {
                         <button
                           type="button"
                           class="mt-1.5 flex items-center gap-2 text-xs text-slate-500 hover:text-blue-600 whitespace-nowrap"
                           (click)="toggle.emit(item.id)"
                         >
                           <span class="w-20 shrink-0 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                            <span class="block h-full rounded-full bg-emerald-500" [style.width.%]="donePercent(item)"></span>
+                            <span class="block h-full rounded-full bg-emerald-500" [style.width.%]="donePercent(row.activities)"></span>
                           </span>
-                          กิจกรรมย่อย {{ doneCount(item) }}/{{ activityCount(item) }} เสร็จสิ้น
+                          กิจกรรมย่อย{{ inQuarterOnly(row) ? 'ในไตรมาส' : '' }} {{ doneCount(row.activities) }}/{{ row.activities.length }} เสร็จสิ้น
                         </button>
                       }
                     </div>
@@ -137,7 +137,7 @@ import { PlanGroup } from '../plan-list.util';
                 </td>
               </tr>
               @if (isExpanded(item.id)) {
-                @for (a of item.activities; track a.id) {
+                @for (a of row.activities; track a.id) {
                   <tr class="border-b border-slate-100 bg-slate-50/70">
                     <td class="pl-12 pr-4 py-2.5">
                       <div class="border-l-2 border-slate-200 pl-3 text-slate-700">
@@ -197,7 +197,7 @@ import { PlanGroup } from '../plan-list.util';
                 {{ item.responsible }}
               </span>
             </div>
-            @if (activityCount(item) > 0) {
+            @if (row.activities.length > 0) {
               <button
                 type="button"
                 class="flex items-center gap-2 text-xs text-slate-500"
@@ -205,16 +205,16 @@ import { PlanGroup } from '../plan-list.util';
                 (click)="toggle.emit(item.id)"
               >
                 <span class="grow h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                  <span class="block h-full rounded-full bg-emerald-500" [style.width.%]="donePercent(item)"></span>
+                  <span class="block h-full rounded-full bg-emerald-500" [style.width.%]="donePercent(row.activities)"></span>
                 </span>
-                กิจกรรมย่อย {{ doneCount(item) }}/{{ activityCount(item) }}
+                กิจกรรมย่อย{{ inQuarterOnly(row) ? 'ในไตรมาส' : '' }} {{ doneCount(row.activities) }}/{{ row.activities.length }}
                 <svg viewBox="0 0 20 20" class="w-3.5 h-3.5 transition-transform" [class.rotate-90]="isExpanded(item.id)" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
                   <path d="M8 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
               </button>
               @if (isExpanded(item.id)) {
                 <ul class="flex flex-col gap-2 border-l-2 border-slate-200 pl-3">
-                  @for (a of item.activities; track a.id) {
+                  @for (a of row.activities; track a.id) {
                     <li class="text-sm text-slate-700">
                       <div class="flex items-start justify-between gap-2">
                         <span>{{ a.name }}</span>
@@ -262,17 +262,17 @@ export class PlanTable {
     return this.expandedIds().has(id);
   }
 
-  activityCount(p: WorkPlan): number {
-    return p.activities?.length ?? 0;
+  /** True when the quarter filter left out some of the project's sub-activities. */
+  inQuarterOnly(row: PlanRow): boolean {
+    return row.activities.length < (row.plan.activities?.length ?? 0);
   }
 
-  doneCount(p: WorkPlan): number {
-    return p.activities?.filter((a) => a.status === 'completed').length ?? 0;
+  doneCount(activities: Activity[]): number {
+    return activities.filter((a) => a.status === 'completed').length;
   }
 
-  donePercent(p: WorkPlan): number {
-    const total = this.activityCount(p);
-    return total ? Math.round((this.doneCount(p) / total) * 100) : 0;
+  donePercent(activities: Activity[]): number {
+    return activities.length ? Math.round((this.doneCount(activities) / activities.length) * 100) : 0;
   }
 
   spansYears(p: WorkPlan): boolean {

@@ -1,5 +1,5 @@
 import { CellValue } from './excel-compare.util';
-import { compareCells, describeFilter, matchesFilter, rowMatches } from './excel-filter.util';
+import { compareCells, describeFilter, matchesFilter, queryRows, rowMatches } from './excel-filter.util';
 
 describe('excel filter', () => {
   it('tests each operator without case or outer spaces', () => {
@@ -25,6 +25,16 @@ describe('excel filter', () => {
     expect([...values].sort(compareCells)).toEqual([2, 10, 33, null]);
     expect(['A10', '', 'A2', 'a1'].sort(compareCells)).toEqual(['a1', 'A2', 'A10', '']);
     expect(compareCells(new Date(Date.UTC(2026, 0, 2)), new Date(Date.UTC(2026, 0, 1)))).toBeGreaterThan(0);
+  });
+
+  it('narrows and orders rows without sorting the rows it was given', () => {
+    const rows = [{ values: ['A10', 'บัญชี'] }, { values: ['A2', 'ไอที'] }, { values: ['A1', 'บัญชี'] }];
+    const sort = { column: 0, dir: 'asc' as const };
+    expect(queryRows(rows, { search: '', filters: [], sort: null })).toBe(rows);
+    expect(queryRows(rows, { search: '', filters: [], sort }).map((r) => r.values[0])).toEqual(['A1', 'A2', 'A10']);
+    expect(rows[0].values[0]).toBe('A10');
+    const narrowed = queryRows(rows, { search: 'บัญ', filters: [], sort: { column: 0, dir: 'desc' } });
+    expect(narrowed.map((r) => r.values[0])).toEqual(['A10', 'A1']);
   });
 
   it('describes a filter for its chip', () => {

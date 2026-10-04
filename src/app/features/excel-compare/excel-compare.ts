@@ -1,30 +1,32 @@
-import { ChangeDetectionStrategy, Component, computed, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Toolbar } from '../../shared/components/toolbar/toolbar';
 import { downloadBlob } from '../../shared/utils/file.util';
 import { todayIso } from '../../shared/utils/date.util';
-import { buildWorkbook, ExportSheet, readWorkbook, resultSheets } from './excel-compare-file';
 import {
-  cellText,
   columnLetter,
-  compareTables,
+  CompareOptions,
+  CompareResult,
   KeyPair,
   MATCH_MODE_LIST,
-  MATCH_STATUS,
   MATCH_STATUS_LIST,
   MatchMode,
   MatchStatus,
-  SheetData,
+  ResultView,
   suggestKeys,
-  Table,
-  TableRow,
-  toTable,
+  viewOf,
 } from './excel-compare.util';
 import { ExcelFileCard } from './excel-file-card';
 import { ExcelResultTable, FilteredExport } from './excel-result-table';
+import { ExportRequest, SheetInfo, Side } from './excel-session';
+import { ExcelWorkerClient, WorkerCrashedError } from './excel-worker.client';
 
-/** The file preview always shows at least this many rows, and a few below the header row. */
-const MIN_PREVIEW_ROWS = 6;
-const SAMPLE_COUNT = 3;
+const MB = 1024 * 1024;
+/** Reading a file above this size takes long enough to say so. */
+const LARGE_FILE_BYTES = 30 * MB;
+/** Above this size the browser is likely to run out of memory, so the file is refused. */
+const MAX_FILE_BYTES = 150 * MB;
+/** A change to the key or picked columns waits this long, so a few quick changes run one comparison. */
+const COMPARE_DELAY_MS = 300;
 
 const STATUS_DOT: Record<MatchStatus, string> = {
   found: 'bg-emerald-500',
@@ -33,17 +35,37 @@ const STATUS_DOT: Record<MatchStatus, string> = {
   empty: 'bg-slate-400',
 };
 
-type Side = 'base' | 'lookup';
-type View = 'all' | MatchStatus | 'unmatched';
-
+/** A file the worker has read; its rows stay in the worker. */
 interface LoadedFile {
   name: string;
-  sheets: SheetData[];
+  sheetNames: string[];
 }
 
 interface Step {
   label: string;
   done: boolean;
+}
+
+function megabytes(bytes: number): string {
+  return (bytes / MB).toFixed(bytes < 10 * MB ? 1 : 0);
+}
+
+function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error ? err.message : fallback;
+}
+
+function delay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      },
+      { once: true },
+    );
+  });
 }
 
 /**
@@ -54,6 +76,7 @@ interface Step {
   selector: 'app-excel-compare',
   standalone: true,
   imports: [Toolbar, ExcelFileCard, ExcelResultTable],
+  providers: [ExcelWorkerClient],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <app-toolbar [showActions]="false" [showYear]="false" />
@@ -90,7 +113,7 @@ interface Step {
           <button
             type="button"
             class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-600 text-sm font-bold text-white shadow-sm shadow-emerald-600/30 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed"
-            [disabled]="!result() || exporting()"
+            [disabled]="!result() || exporting() || comparing()"
             (click)="exportAll()"
           >
             <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
@@ -136,13 +159,14 @@ interface Step {
             title="ไฟล์ตั้งต้น"
             hint="ไฟล์ของคุณ ทุกแถวจะอยู่ในผลลัพธ์"
             [fileName]="base()?.name ?? null"
-            [sheetNames]="sheetNames(base())"
+            [sheetNames]="base()?.sheetNames ?? []"
             [sheetIndex]="baseSheet()"
             [headerRow]="baseHeaderRow()"
-            [rowCount]="baseTable()?.rows?.length ?? 0"
-            [columnCount]="baseTable()?.headers?.length ?? 0"
-            [previewRows]="basePreview()"
-            [loading]="loading() === 'base'"
+            [rowCount]="baseInfo()?.rowCount ?? 0"
+            [columnCount]="baseInfo()?.headers?.length ?? 0"
+            [previewRows]="baseInfo()?.preview ?? []"
+            [loading]="loading()['base'] !== undefined"
+            [loadingHint]="loading()['base'] ?? ''"
             (fileChange)="load('base', $event)"
             (sheetChange)="setSheet('base', $event)"
             (headerRowChange)="setHeaderRow('base', $event)"
@@ -153,7 +177,7 @@ interface Step {
               class="w-10 h-10 rounded-full bg-white ring-1 ring-slate-200 shadow-sm flex items-center justify-center text-slate-500 hover:text-blue-600 hover:ring-blue-300 disabled:opacity-30"
               title="สลับไฟล์ตั้งต้นกับไฟล์เปรียบเทียบ"
               aria-label="สลับไฟล์ตั้งต้นกับไฟล์เปรียบเทียบ"
-              [disabled]="!base() && !lookup()"
+              [disabled]="(!base() && !lookup()) || busy()"
               (click)="swap()"
             >
               <svg viewBox="0 0 20 20" class="w-5 h-5 rotate-90 md:rotate-0" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
@@ -166,22 +190,23 @@ interface Step {
             title="ไฟล์ที่ใช้เปรียบเทียบ"
             hint="ไฟล์ที่มีข้อมูลที่ต้องการดึงมาใส่"
             [fileName]="lookup()?.name ?? null"
-            [sheetNames]="sheetNames(lookup())"
+            [sheetNames]="lookup()?.sheetNames ?? []"
             [sheetIndex]="lookupSheet()"
             [headerRow]="lookupHeaderRow()"
-            [rowCount]="lookupTable()?.rows?.length ?? 0"
-            [columnCount]="lookupTable()?.headers?.length ?? 0"
-            [previewRows]="lookupPreview()"
-            [loading]="loading() === 'lookup'"
+            [rowCount]="lookupInfo()?.rowCount ?? 0"
+            [columnCount]="lookupInfo()?.headers?.length ?? 0"
+            [previewRows]="lookupInfo()?.preview ?? []"
+            [loading]="loading()['lookup'] !== undefined"
+            [loadingHint]="loading()['lookup'] ?? ''"
             (fileChange)="load('lookup', $event)"
             (sheetChange)="setSheet('lookup', $event)"
             (headerRowChange)="setHeaderRow('lookup', $event)"
           />
         </div>
 
-        @if (baseTable() && lookupTable()) {
-          @let bt = baseTable()!;
-          @let lt = lookupTable()!;
+        @if (baseInfo() && lookupInfo()) {
+          @let bt = baseInfo()!;
+          @let lt = lookupInfo()!;
           <section class="bg-white rounded-2xl ring-1 ring-slate-200 shadow-sm p-4 md:p-5 flex flex-col gap-5">
             <div class="flex flex-wrap items-start gap-3">
               <div class="flex items-center gap-2 grow">
@@ -191,6 +216,12 @@ interface Step {
                   <p class="text-xs text-slate-500">เลือกคอลัมน์ที่ใช้จับคู่แถวของสองไฟล์ แล้วเลือกข้อมูลที่จะดึงมาใส่</p>
                 </div>
               </div>
+              @if (comparing()) {
+                <div class="flex items-center gap-2 text-xs font-semibold text-slate-500" role="status">
+                  <div class="w-4 h-4 rounded-full border-2 border-blue-200 border-t-blue-600 animate-spin" aria-hidden="true"></div>
+                  กำลังเปรียบเทียบ…
+                </div>
+              }
               @if (result(); as r) {
                 <div class="w-full sm:w-64">
                   <div class="flex items-baseline justify-between text-xs">
@@ -209,6 +240,10 @@ interface Step {
                 </div>
               }
             </div>
+
+            @if (compareError(); as e) {
+              <p class="text-sm text-red-700 bg-red-50 ring-1 ring-red-200 rounded-xl px-3 py-2" role="alert">{{ e }}</p>
+            }
 
             <div class="flex flex-col gap-2">
               <div class="text-sm font-semibold text-slate-700">ก. จับคู่แถวด้วยคอลัมน์ (Key)</div>
@@ -230,7 +265,7 @@ interface Step {
                         <option [value]="$index" [selected]="$index === k.base">{{ columnLabel($index, h) }}</option>
                       }
                     </select>
-                    <span class="px-1 text-[11px] text-slate-400 truncate">ตัวอย่าง: {{ samples(bt, k.base) }}</span>
+                    <span class="px-1 text-[11px] text-slate-400 truncate">ตัวอย่าง: {{ bt.samples[k.base] }}</span>
                   </div>
                   <select
                     class="w-full border rounded-lg px-3 py-2 text-sm font-semibold outline-none focus:ring-4 focus:ring-blue-500/10"
@@ -253,7 +288,7 @@ interface Step {
                         <option [value]="$index" [selected]="$index === k.lookup">{{ columnLabel($index, h) }}</option>
                       }
                     </select>
-                    <span class="px-1 text-[11px] text-slate-400 truncate">ตัวอย่าง: {{ samples(lt, k.lookup) }}</span>
+                    <span class="px-1 text-[11px] text-slate-400 truncate">ตัวอย่าง: {{ lt.samples[k.lookup] }}</span>
                   </div>
                   <button
                     type="button"
@@ -390,35 +425,53 @@ interface Step {
   `,
 })
 export class ExcelCompare {
+  private readonly excel = inject(ExcelWorkerClient);
+
   readonly modes = MATCH_MODE_LIST;
 
   base = signal<LoadedFile | null>(null);
   baseSheet = signal(0);
   baseHeaderRow = signal(1);
+  baseInfo = signal<SheetInfo | null>(null);
   lookup = signal<LoadedFile | null>(null);
   lookupSheet = signal(0);
   lookupHeaderRow = signal(1);
-  loading = signal<Side | null>(null);
+  lookupInfo = signal<SheetInfo | null>(null);
+  /** The sides being read, each with a hint to show while it is. */
+  loading = signal<Partial<Record<Side, string>>>({});
+  busy = computed(() => Object.keys(this.loading()).length > 0);
 
   keys = signal<KeyPair[]>([]);
   pick = signal<number[]>([]);
   trim = signal(true);
   ignoreCase = signal(true);
-  view = signal<View>('all');
+  view = signal<ResultView>('all');
   exporting = signal(false);
 
-  baseTable = computed(() => this.tableOf(this.base(), this.baseSheet(), this.baseHeaderRow()));
-  lookupTable = computed(() => this.tableOf(this.lookup(), this.lookupSheet(), this.lookupHeaderRow()));
-  basePreview = computed(() => this.previewOf(this.base(), this.baseSheet(), this.baseHeaderRow()));
-  lookupPreview = computed(() => this.previewOf(this.lookup(), this.lookupSheet(), this.lookupHeaderRow()));
+  /** The last comparison; kept on screen while the next one runs. */
+  result = signal<CompareResult | null>(null);
+  comparing = signal(false);
+  compareError = signal<string | null>(null);
 
-  result = computed(() => {
-    const base = this.baseTable();
-    const lookup = this.lookupTable();
-    const keys = this.keys();
-    if (!base || !lookup || keys.length === 0) return null;
-    return compareTables(base, lookup, { keys, pick: this.pick(), trim: this.trim(), ignoreCase: this.ignoreCase() });
+  private readonly sides = {
+    base: { file: this.base, sheet: this.baseSheet, headerRow: this.baseHeaderRow, info: this.baseInfo },
+    lookup: { file: this.lookup, sheet: this.lookupSheet, headerRow: this.lookupHeaderRow, info: this.lookupInfo },
+  };
+
+  private readonly compareOptions = computed<CompareOptions | null>(() => {
+    // Read the tables too, so another sheet or header row compares again with the same keys.
+    if (!this.baseInfo() || !this.lookupInfo() || this.keys().length === 0) return null;
+    return { keys: this.keys(), pick: this.pick(), trim: this.trim(), ignoreCase: this.ignoreCase() };
   });
+
+  constructor() {
+    effect((onCleanup) => {
+      const options = this.compareOptions();
+      const abort = new AbortController();
+      onCleanup(() => abort.abort());
+      untracked(() => void this.runCompare(options, abort.signal));
+    });
+  }
 
   matchedCount = computed(() => {
     const r = this.result();
@@ -439,50 +492,25 @@ export class ExcelCompare {
 
   currentStep = computed(() => this.steps().findIndex((s) => !s.done));
 
-  /** The comparison rows that matched nothing, in the table's row shape. */
-  private unmatchedRows = computed<TableRow[]>(() =>
-    (this.result()?.unmatchedLookup ?? []).map((values) => ({ values, status: null, matches: 0 })),
-  );
-
   tabs = computed(() => {
     const r = this.result();
     if (!r) return [];
     return [
-      { view: 'all' as View, label: 'ทั้งหมด', count: r.rows.length, dot: '' },
-      ...MATCH_STATUS_LIST.map((s) => ({ view: s.value as View, label: s.label, count: r.counts[s.value], dot: STATUS_DOT[s.value] })),
-      { view: 'unmatched' as View, label: 'มีเฉพาะในไฟล์เปรียบเทียบ', count: r.unmatchedLookup.length, dot: 'bg-violet-500' },
+      { view: 'all' as ResultView, label: 'ทั้งหมด', count: r.rows.length, dot: '' },
+      ...MATCH_STATUS_LIST.map((s) => ({ view: s.value as ResultView, label: s.label, count: r.counts[s.value], dot: STATUS_DOT[s.value] })),
+      { view: 'unmatched' as ResultView, label: 'มีเฉพาะในไฟล์เปรียบเทียบ', count: r.unmatchedLookup.length, dot: 'bg-violet-500' },
     ];
   });
 
   /** What the result table shows for the selected tab. */
   tableData = computed(() => {
     const r = this.result();
-    if (!r) return null;
-    const view = this.view();
-    if (view === 'unmatched') {
-      return { headers: this.lookupTable()!.headers, rows: this.unmatchedRows(), addedFrom: Infinity, withStatus: false };
-    }
-    const rows: TableRow[] = view === 'all' ? r.rows : r.rows.filter((row) => row.status === view);
-    return { headers: r.headers, rows, addedFrom: r.addedFrom, withStatus: true };
+    const lookup = this.lookupInfo();
+    return r && lookup ? viewOf(r, lookup.headers, this.view()) : null;
   });
-
-  sheetNames(file: LoadedFile | null): string[] {
-    return file?.sheets.map((s) => s.name) ?? [];
-  }
 
   columnLabel(index: number, header: string): string {
     return `${columnLetter(index)} · ${header}`;
-  }
-
-  /** A few distinct values of a column, so the user can see whether two key columns hold the same kind of data. */
-  samples(table: Table, column: number): string {
-    const seen = new Set<string>();
-    for (const row of table.rows) {
-      const text = cellText(row[column] ?? null).trim();
-      if (text) seen.add(text);
-      if (seen.size >= SAMPLE_COUNT) break;
-    }
-    return seen.size ? [...seen].join(', ') : '(ว่าง)';
   }
 
   modeHint(mode: MatchMode): string {
@@ -501,7 +529,7 @@ export class ExcelCompare {
   /** Every column except the ones used as keys, which would only repeat what the base row already has. */
   pickAll(): void {
     const keyCols = new Set(this.keys().map((k) => k.lookup));
-    this.pick.set((this.lookupTable()?.headers ?? []).map((_, i) => i).filter((i) => !keyCols.has(i)));
+    this.pick.set((this.lookupInfo()?.headers ?? []).map((_, i) => i).filter((i) => !keyCols.has(i)));
   }
 
   setKey(index: number, side: Side, column: number): void {
@@ -520,95 +548,158 @@ export class ExcelCompare {
     this.keys.update((keys) => keys.filter((_, i) => i !== index));
   }
 
-  setSheet(side: Side, index: number): void {
-    (side === 'base' ? this.baseSheet : this.lookupSheet).set(index);
-    this.resetMapping();
+  /** Another sheet is parsed again from the file, so it shows as loading. */
+  setSheet(side: Side, index: number): Promise<void> {
+    return this.select(side, index, this.sides[side].headerRow(), true);
   }
 
-  setHeaderRow(side: Side, row: number): void {
-    (side === 'base' ? this.baseHeaderRow : this.lookupHeaderRow).set(row);
-    this.resetMapping();
+  setHeaderRow(side: Side, row: number): Promise<void> {
+    return this.select(side, this.sides[side].sheet(), row, false);
   }
 
   /** Column indexes mean nothing once either table changes shape, so start the mapping over. */
   resetMapping(): void {
-    const base = this.baseTable();
-    const lookup = this.lookupTable();
+    const base = this.baseInfo();
+    const lookup = this.lookupInfo();
     this.keys.set(base && lookup ? suggestKeys(base, lookup) : []);
     this.pick.set([]);
     this.view.set('all');
   }
 
   swap(): void {
-    const [file, sheet, header] = [this.base(), this.baseSheet(), this.baseHeaderRow()];
+    this.excel.call('swap', []).catch(() => undefined);
+    const [file, sheet, header, info] = [this.base(), this.baseSheet(), this.baseHeaderRow(), this.baseInfo()];
     this.base.set(this.lookup());
     this.baseSheet.set(this.lookupSheet());
     this.baseHeaderRow.set(this.lookupHeaderRow());
+    this.baseInfo.set(this.lookupInfo());
     this.lookup.set(file);
     this.lookupSheet.set(sheet);
     this.lookupHeaderRow.set(header);
+    this.lookupInfo.set(info);
     this.resetMapping();
   }
 
   resetAll(): void {
-    this.base.set(null);
-    this.lookup.set(null);
+    this.excel.call('clear', []).catch(() => undefined);
+    this.clearSide('base');
+    this.clearSide('lookup');
     this.resetMapping();
   }
 
   async load(side: Side, file: File): Promise<void> {
-    this.loading.set(side);
+    if (file.size > MAX_FILE_BYTES) {
+      alert(
+        `ไฟล์ "${file.name}" มีขนาด ${megabytes(file.size)} MB เกินกว่าที่รองรับ (${megabytes(MAX_FILE_BYTES)} MB)\n` +
+          'กรุณาลบ Sheet หรือคอลัมน์ที่ไม่ใช้ออก หรือแยกเป็นหลายไฟล์',
+      );
+      return;
+    }
+    this.setLoading(side, file.size > LARGE_FILE_BYTES ? `ไฟล์ขนาด ${megabytes(file.size)} MB อาจใช้เวลาสักครู่` : '');
     try {
-      const sheets = await readWorkbook(await file.arrayBuffer());
-      (side === 'base' ? this.base : this.lookup).set({ name: file.name, sheets });
-      (side === 'base' ? this.baseSheet : this.lookupSheet).set(0);
-      (side === 'base' ? this.baseHeaderRow : this.lookupHeaderRow).set(1);
+      const opened = await this.excel.call('open', [side, file]);
+      const s = this.sides[side];
+      s.file.set({ name: file.name, sheetNames: opened.sheetNames });
+      s.sheet.set(0);
+      s.headerRow.set(1);
+      s.info.set(opened.sheet);
       this.resetMapping();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'นำเข้าไฟล์ไม่สำเร็จ');
+      // The worker has already let go of the file this one was to replace.
+      this.clearSide(side);
+      this.resetMapping();
+      this.fail(err, 'นำเข้าไฟล์ไม่สำเร็จ');
     } finally {
-      this.loading.set(null);
+      this.setLoading(side, null);
     }
   }
 
   exportAll(): void {
-    const result = this.result();
-    const lookup = this.lookupTable();
-    if (result && lookup) this.download(resultSheets(result, lookup), 'compare');
+    this.download({ kind: 'all' }, 'compare');
   }
 
   exportFiltered(filtered: FilteredExport): void {
-    const data = this.tableData();
-    if (!data) return;
-    const sheet: ExportSheet = {
-      name: 'ข้อมูลที่กรอง',
-      headers: data.headers,
-      rows: filtered.rows,
-      withStatus: data.withStatus,
-      addedFrom: data.addedFrom,
-      columns: filtered.columns,
-    };
-    this.download([sheet], 'filtered');
+    this.download({ kind: 'filtered', view: this.view(), query: filtered.query, columns: filtered.columns }, 'filtered');
   }
 
-  private async download(sheets: ExportSheet[], suffix: string): Promise<void> {
+  private async download(request: ExportRequest, suffix: string): Promise<void> {
     this.exporting.set(true);
     try {
-      const blob = await buildWorkbook(sheets);
-      const baseName = (this.base()?.name ?? 'excel').replace(/\.xlsx$/i, '');
+      const blob = await this.excel.call('export', [request]);
+      const baseName = (this.base()?.name ?? 'excel').replace(/\.(xlsx|xls|csv)$/i, '');
       downloadBlob(blob, `${baseName}-${suffix}-${todayIso()}.xlsx`);
     } catch (err) {
-      alert(`ส่งออก Excel ไม่สำเร็จ: ${err instanceof Error ? err.message : 'เกิดข้อผิดพลาด'}`);
+      if (err instanceof WorkerCrashedError) this.fail(err, '');
+      else alert(`ส่งออก Excel ไม่สำเร็จ: ${errorMessage(err, 'เกิดข้อผิดพลาด')}`);
     } finally {
       this.exporting.set(false);
     }
   }
 
-  private tableOf(file: LoadedFile | null, sheet: number, headerRow: number): Table | null {
-    return file ? toTable(file.sheets[sheet], headerRow) : null;
+  private async select(side: Side, sheet: number, headerRow: number, showLoading: boolean): Promise<void> {
+    if (showLoading) this.setLoading(side, '');
+    try {
+      const info = await this.excel.call('selectSheet', [side, sheet, headerRow]);
+      const s = this.sides[side];
+      s.sheet.set(sheet);
+      s.headerRow.set(headerRow);
+      s.info.set(info);
+      this.resetMapping();
+    } catch (err) {
+      this.clearSide(side);
+      this.resetMapping();
+      this.fail(err, 'อ่าน Sheet ไม่สำเร็จ');
+    } finally {
+      if (showLoading) this.setLoading(side, null);
+    }
   }
 
-  private previewOf(file: LoadedFile | null, sheet: number, headerRow: number) {
-    return file ? file.sheets[sheet].rows.slice(0, Math.max(MIN_PREVIEW_ROWS, headerRow + 3)) : [];
+  private async runCompare(options: CompareOptions | null, signal: AbortSignal): Promise<void> {
+    this.compareError.set(null);
+    if (!options) {
+      this.result.set(null);
+      this.comparing.set(false);
+      return;
+    }
+    this.comparing.set(true);
+    try {
+      await delay(COMPARE_DELAY_MS, signal);
+      this.result.set(await this.excel.call('compare', [options], signal));
+    } catch (err) {
+      // A newer comparison has taken over.
+      if (signal.aborted) return;
+      this.result.set(null);
+      if (err instanceof WorkerCrashedError) this.fail(err, '');
+      else this.compareError.set(errorMessage(err, 'เปรียบเทียบไม่สำเร็จ'));
+    }
+    this.comparing.set(false);
+  }
+
+  /** Shows what went wrong; when the worker has crashed, both files went with it. */
+  private fail(err: unknown, fallback: string): void {
+    if (err instanceof WorkerCrashedError) {
+      this.clearSide('base');
+      this.clearSide('lookup');
+      this.resetMapping();
+    }
+    alert(errorMessage(err, fallback));
+  }
+
+  private clearSide(side: Side): void {
+    const s = this.sides[side];
+    s.file.set(null);
+    s.sheet.set(0);
+    s.headerRow.set(1);
+    s.info.set(null);
+  }
+
+  /** `null` once the side is read. */
+  private setLoading(side: Side, hint: string | null): void {
+    this.loading.update((l) => {
+      const next = { ...l };
+      if (hint === null) delete next[side];
+      else next[side] = hint;
+      return next;
+    });
   }
 }

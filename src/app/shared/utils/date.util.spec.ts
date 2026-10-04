@@ -14,7 +14,10 @@ import {
   monthSpanInFiscalYear,
   monthSpanInFiscalYears,
   monthStartIso,
+  overlapsQuarter,
   parseIsoDate,
+  quarterMonths,
+  quarterMonthsLabel,
   toIsoDate,
   withFiscalYear,
 } from './date.util';
@@ -130,6 +133,32 @@ describe('monthGridColumn', () => {
     expect(monthGridColumn('2027-01-01', '2027-02-01', 2569)).toBeNull();
     // a window of two fiscal years: the bar can run past September of the first
     expect(monthGridColumn('2026-08-01', '2026-12-31', 2569, 2570)).toBe('12 / 17');
+  });
+});
+
+describe('quarters', () => {
+  it('splits the fiscal year into quarters of three months, October first', () => {
+    expect([1, 2, 3, 4].map(quarterMonths)).toEqual([
+      [1, 3],
+      [4, 6],
+      [7, 9],
+      [10, 12],
+    ]);
+  });
+
+  it('tells whether a date range runs in some part of a quarter', () => {
+    // Fiscal year 2569: Q1 is Oct–Dec 2025, Q2 is Jan–Mar 2026
+    expect(overlapsQuarter('2025-12-20', '2026-01-10', 2569, 1)).toBe(true);
+    expect(overlapsQuarter('2025-12-20', '2026-01-10', 2569, 2)).toBe(true);
+    expect(overlapsQuarter('2025-12-20', '2026-01-10', 2569, 3)).toBe(false);
+    expect(overlapsQuarter('2024-10-01', '2024-12-31', 2569, 1)).toBe(false);
+    expect(overlapsQuarter('', '', 2569, 1)).toBe(false);
+  });
+
+  it('names the months of a quarter, with the year they fall in', () => {
+    expect(quarterMonthsLabel(1)).toBe('ต.ค. – ธ.ค.');
+    expect(quarterMonthsLabel(1, 2569)).toBe('ต.ค. – ธ.ค. 2568');
+    expect(quarterMonthsLabel(4, 2569)).toBe('ก.ค. – ก.ย. 2569');
   });
 });
 

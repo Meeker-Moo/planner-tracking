@@ -1,22 +1,27 @@
-import { WorkPlan, WorkStatus } from '../../core/models/work-plan.model';
+import { Activity, WorkPlan, WorkStatus } from '../../core/models/work-plan.model';
 import { ListSpan } from '../../core/services/fiscal-year-state.service';
 import { STATUS_LIST } from '../../core/models/status.constant';
+import { activitiesInQuarter, planInQuarter } from '../../shared/utils/activity.util';
 import { monthSpanInFiscalYear } from '../../shared/utils/date.util';
 
 export interface PlanFilters {
   keyword: string;
   /** Month position in the fiscal year: 1 = October … 12 = September. */
   month: number | null;
+  /** Quarter of the fiscal year (1 = October–December … 4 = July–September), matched by sub-activities. */
+  quarter: number | null;
   status: WorkStatus | null;
   type: string | null;
 }
 
-export const NO_FILTERS: PlanFilters = { keyword: '', month: null, status: null, type: null };
+export const NO_FILTERS: PlanFilters = { keyword: '', month: null, quarter: null, status: null, type: null };
 
 export interface PlanRow {
   plan: WorkPlan;
   /** The fiscal year the project started in, when it is shown under a later year it runs into; otherwise null. */
   carriedFrom: number | null;
+  /** The sub-activities to show: all of them, or only those in the selected quarter. */
+  activities: Activity[];
 }
 
 export interface PlanGroup {
@@ -33,7 +38,7 @@ export function fiscalYearsInView(selectedYear: number, span: ListSpan, yearsWit
   return Array.from({ length: span }, (_, i) => selectedYear - i);
 }
 
-/** True when the project passes every filter; the month filter is read within `fiscalYear`. */
+/** True when the project passes every filter; the month and quarter filters are read within `fiscalYear`. */
 export function matchesFilters(p: WorkPlan, filters: PlanFilters, fiscalYear: number): boolean {
   const keyword = filters.keyword.trim().toLowerCase();
   if (
@@ -48,6 +53,7 @@ export function matchesFilters(p: WorkPlan, filters: PlanFilters, fiscalYear: nu
     const span = monthSpanInFiscalYear(p.startDate, p.endDate, fiscalYear);
     if (!span || filters.month < span[0] || filters.month > span[1]) return false;
   }
+  if (filters.quarter && !planInQuarter(p, fiscalYear, filters.quarter)) return false;
   if (filters.status && p.status !== filters.status) return false;
   if (filters.type && p.type !== filters.type) return false;
   return true;
@@ -67,7 +73,7 @@ export function buildPlanGroups(plans: WorkPlan[], years: number[], filters: Pla
       .filter((p) => p.year === fiscalYear || (p.year < fiscalYear && monthSpanInFiscalYear(p.startDate, p.endDate, fiscalYear) !== null))
       .filter((p) => matchesFilters(p, filters, fiscalYear))
       .sort(byStartThenName)
-      .map((plan) => ({ plan, carriedFrom: plan.year < fiscalYear ? plan.year : null }));
+      .map((plan) => toRow(plan, plan.year < fiscalYear ? plan.year : null, fiscalYear, filters));
     return [{ fiscalYear, rows }];
   }
 
@@ -77,7 +83,7 @@ export function buildPlanGroups(plans: WorkPlan[], years: number[], filters: Pla
       rows: plans
         .filter((p) => p.year === fiscalYear && matchesFilters(p, filters, fiscalYear))
         .sort(byStartThenName)
-        .map((plan) => ({ plan, carriedFrom: null })),
+        .map((plan) => toRow(plan, null, fiscalYear, filters)),
     }))
     .filter((g) => g.rows.length > 0);
 }
@@ -96,7 +102,14 @@ export function countByStatus(plans: WorkPlan[], years: number[], filters: PlanF
 }
 
 export function hasActiveFilters(filters: PlanFilters): boolean {
-  return !!filters.keyword.trim() || filters.month !== null || filters.status !== null || filters.type !== null;
+  return (
+    !!filters.keyword.trim() || filters.month !== null || filters.quarter !== null || filters.status !== null || filters.type !== null
+  );
+}
+
+function toRow(plan: WorkPlan, carriedFrom: number | null, fiscalYear: number, filters: PlanFilters): PlanRow {
+  const activities = filters.quarter ? activitiesInQuarter(plan, fiscalYear, filters.quarter) : (plan.activities ?? []);
+  return { plan, carriedFrom, activities };
 }
 
 function byStartThenName(a: WorkPlan, b: WorkPlan): number {

@@ -94,6 +94,37 @@ describe('buildPlanGroups — several years', () => {
   });
 });
 
+describe('buildPlanGroups — quarter', () => {
+  const activity = (name: string, startDate: string, endDate: string) => ({ id: name, name, startDate, endDate, status: 'planned' as const });
+
+  it('keeps the projects with a sub-activity in the quarter, showing only those sub-activities', () => {
+    const plans = [
+      plan({
+        name: 'ทั้งปี',
+        startDate: '2025-10-01',
+        endDate: '2026-09-30',
+        activities: [activity('อบรม', '2026-01-10', '2026-01-20'), activity('สรุปผล', '2026-08-01', '2026-08-31')],
+      }),
+      plan({ name: 'ไม่มีใน Q2', startDate: '2025-10-01', endDate: '2026-09-30', activities: [activity('ปิดงาน', '2026-09-01', '2026-09-30')] }),
+      plan({ name: 'ไม่มีกิจกรรม', startDate: '2026-03-01', endDate: '2026-04-30' }),
+    ];
+    const [group] = buildPlanGroups(plans, [2569], { ...NO_FILTERS, quarter: 2 });
+    expect(group.rows.map((r) => [r.plan.name, r.activities.map((a) => a.name)])).toEqual([
+      ['ทั้งปี', ['อบรม']],
+      ['ไม่มีกิจกรรม', []],
+    ]);
+  });
+
+  it('shows every sub-activity when no quarter is chosen', () => {
+    const p = plan({ activities: [activity('ก', '2026-01-01', '2026-01-02'), activity('ข', '2026-08-01', '2026-08-02')] });
+    expect(buildPlanGroups([p], [2569], NO_FILTERS)[0].rows[0].activities).toHaveLength(2);
+  });
+
+  it('counts a quarter filter as active', () => {
+    expect(hasActiveFilters({ ...NO_FILTERS, quarter: 3 })).toBe(true);
+  });
+});
+
 describe('matchesFilters', () => {
   const p = plan({
     name: 'อบรมบุคลากร',
