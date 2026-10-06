@@ -56,7 +56,8 @@
   - ทดสอบในเบราว์เซอร์จริง (Chrome headless) กับ Worker + D1 local แล้ว: admin สร้างโครงการ, reload และเปิด `/plans/<id>` ตรง ๆ ยังอยู่, user1 เห็น Dashboard แต่ไม่เห็นโครงการของ admin ในรายการ, ไม่มี error ใน console
 - ✅ **หัวข้อ 4 Deploy** ทำแล้ว: `deploy.yml` รัน test ทั้งสองชุด → build → migrate D1 → `wrangler deploy` และอัปเดต README
 - ✅ **หัวข้อ 6 Tests** ทำแล้ว: spec ฝั่ง client ใช้ `FakeApi` ใน `auth.testing.ts` (backend ในหน่วยความจำ) แทน localStorage
-- ⏳ เหลือ: push ไป `main` ครั้งแรก → สร้าง Super Admin → ตรวจ `wrangler tail` → ปิด GitHub Pages และเปลี่ยน repo เป็น private
+- ⏳ เหลือ: push ไป `main` ครั้งแรก → สร้าง Super Admin → ตรวจ `wrangler tail`
+- ⏸ ปิด GitHub Pages และเปลี่ยน repo เป็น private: ผู้ใช้เข้าไปทำเองในหน้าเว็บ GitHub หลังเว็บใหม่ใช้งานได้ (ไม่ตั้งเวลาอัตโนมัติ เพราะต้องใช้ token สิทธิ์ admin)
 - ⏳ เลื่อนไปหลัง go-live: Cron backup ไป R2
 
 ## ปรับจากที่อ่านโค้ด
