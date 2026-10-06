@@ -76,6 +76,33 @@ describe('WorkPlanService activities', () => {
     expect(updated?.activities?.map((a) => a.id)).toEqual(['a1']);
   });
 
+  it('records when the status of a project or an activity last changed', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-10-01T09:00:00Z'));
+      const plan = service.add(input);
+      service.saveActivity(plan.id, activity('a1'));
+      expect(plan.statusUpdatedAt).toBe('2026-10-01T09:00:00.000Z');
+      expect(service.getById(plan.id)?.activities?.[0].statusUpdatedAt).toBe('2026-10-01T09:00:00.000Z');
+
+      vi.setSystemTime(new Date('2026-10-02T10:00:00Z'));
+      service.update(plan.id, { ...input, name: 'ชื่อใหม่' });
+      service.saveActivity(plan.id, { ...activity('a1'), name: 'ชื่อใหม่' });
+      let saved = service.getById(plan.id)!;
+      expect(saved.statusUpdatedAt).toBe('2026-10-01T09:00:00.000Z');
+      expect(saved.activities![0].statusUpdatedAt).toBe('2026-10-01T09:00:00.000Z');
+
+      vi.setSystemTime(new Date('2026-10-03T11:30:00Z'));
+      service.update(plan.id, { ...input, status: 'in-progress' });
+      service.saveActivity(plan.id, { ...activity('a1'), status: 'completed' });
+      saved = service.getById(plan.id)!;
+      expect(saved.statusUpdatedAt).toBe('2026-10-03T11:30:00.000Z');
+      expect(saved.activities![0].statusUpdatedAt).toBe('2026-10-03T11:30:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('saves to localStorage', () => {
     const plan = service.add(input);
     service.saveActivity(plan.id, activity('a1'));

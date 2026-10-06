@@ -70,6 +70,15 @@ export function formatDateShort(iso: string): string {
   return `${d.getDate()} ${THAI_MONTHS[d.getMonth()]} ${buddhistYear.toString().padStart(2, '0')}`;
 }
 
+/** A date-time in local time, short date and 24-hour clock, e.g. "6 ต.ค. 69 14:05 น."; '' when missing or invalid. */
+export function formatDateTimeShort(iso: string | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const time = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+  return `${formatDateShort(iso)} ${time} น.`;
+}
+
 // ---------- fiscal year (ปีงบประมาณ) ----------
 // 1 October – 30 September, named by the Buddhist year in which it ends:
 // October 2568 – September 2569 is fiscal year 2569.

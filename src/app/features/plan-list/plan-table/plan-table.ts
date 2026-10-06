@@ -11,6 +11,7 @@ import {
   fiscalYearRangeLabel,
   fiscalYearSpanLabel,
   formatDateShort,
+  formatDateTimeShort,
   formatMonthYearShort,
 } from '../../../shared/utils/date.util';
 import { PlanGroup, PlanRow } from '../plan-list.util';
@@ -119,7 +120,12 @@ import { PlanGroup, PlanRow } from '../plan-list.util';
                     <div class="text-xs text-slate-400">ปีงบ {{ yearSpan(item) }}</div>
                   }
                 </td>
-                <td class="px-4 py-3.5 align-top"><app-status-badge [status]="item.status" /></td>
+                <td class="px-4 py-3.5 align-top">
+                  <app-status-badge [status]="item.status" />
+                  @if (item.statusUpdatedAt) {
+                    <div class="mt-1 text-[11px] text-slate-400 whitespace-nowrap">วันที่แก้ไข {{ formatDateTime(item.statusUpdatedAt) }}</div>
+                  }
+                </td>
                 <td class="px-4 py-3 align-top text-right whitespace-nowrap">
                   <div class="inline-flex items-center gap-0.5">
                     <a [routerLink]="['/plans', item.id]" class="w-8 h-8 inline-flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60" title="รายละเอียด" [attr.aria-label]="'รายละเอียด ' + item.name">
@@ -164,7 +170,12 @@ import { PlanGroup, PlanRow } from '../plan-list.util';
                     <td></td>
                     <td class="px-4 py-2.5 text-slate-600">{{ a.responsible }}</td>
                     <td class="px-4 py-2.5 text-slate-600 whitespace-nowrap">{{ formatDate(a.startDate) }} – {{ formatDate(a.endDate) }}</td>
-                    <td class="px-4 py-2.5"><app-status-badge [status]="a.status" /></td>
+                    <td class="px-4 py-2.5">
+                      <app-status-badge [status]="a.status" />
+                      @if (a.statusUpdatedAt) {
+                        <div class="mt-1 text-[11px] text-slate-400 whitespace-nowrap">วันที่แก้ไข {{ formatDateTime(a.statusUpdatedAt) }}</div>
+                      }
+                    </td>
                     <td></td>
                   </tr>
                 }
@@ -195,6 +206,9 @@ import { PlanGroup, PlanRow } from '../plan-list.util';
               <app-status-badge [status]="item.status" />
             </div>
             <app-owner-tag [item]="item" />
+            @if (item.statusUpdatedAt) {
+              <span class="text-[11px] text-slate-400">อัปเดตสถานะ {{ formatDateTime(item.statusUpdatedAt) }}</span>
+            }
             @if (row.carriedFrom !== null) {
               <span class="w-fit rounded-md bg-indigo-50 text-indigo-700 text-[11px] font-semibold px-1.5 py-0.5">ต่อเนื่องจากปีงบ {{ row.carriedFrom }}</span>
             }
@@ -232,6 +246,9 @@ import { PlanGroup, PlanRow } from '../plan-list.util';
                       <div class="text-xs text-slate-500">
                         {{ formatDate(a.startDate) }} – {{ formatDate(a.endDate) }}{{ a.responsible ? ' · ' + a.responsible : '' }}
                       </div>
+                      @if (a.statusUpdatedAt) {
+                        <div class="text-[11px] text-slate-400">อัปเดตสถานะ {{ formatDateTime(a.statusUpdatedAt) }}</div>
+                      }
                       @if (a.note) {
                         <div class="text-xs text-amber-700 whitespace-pre-line">หมายเหตุ: {{ a.note }}</div>
                       }
@@ -271,6 +288,7 @@ export class PlanTable {
   readonly yearSpan = (p: WorkPlan) => fiscalYearSpanLabel(p.startDate, p.endDate);
   readonly progress = todoProgress;
   readonly formatDate = formatDateShort;
+  readonly formatDateTime = formatDateTimeShort;
   readonly formatMonth = formatMonthYearShort;
 
   /** Deleting, like editing in full, is for the project's owner and Admin. */

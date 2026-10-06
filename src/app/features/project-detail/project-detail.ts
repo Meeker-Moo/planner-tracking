@@ -13,7 +13,7 @@ import { ActivityFormDialog } from './activity-form-dialog/activity-form-dialog'
 import { WorkPlanService } from '../../core/services/work-plan.service';
 import { STATUS_LIST, STATUS_MAP } from '../../core/models/status.constant';
 import { Activity, TodoItem, WorkPlanInput, WorkStatus } from '../../core/models/work-plan.model';
-import { fiscalYearSpanLabel, formatDateShort, formatMonthYearShort, formatMonthYearThai, todayIso } from '../../shared/utils/date.util';
+import { fiscalYearSpanLabel, formatDateShort, formatDateTimeShort, formatMonthYearShort, formatMonthYearThai, todayIso } from '../../shared/utils/date.util';
 import { todoProgress } from '../../shared/utils/activity.util';
 import { uid } from '../../shared/utils/id.util';
 import { elapsedBarBackground } from '../timeline/timeline.util';
@@ -73,7 +73,12 @@ const TONE_CLASS: Record<string, string> = {
                   </div>
                   <h1 class="mt-1.5 text-xl md:text-2xl font-bold text-slate-900 wrap-break-word">{{ p.name }}</h1>
                 </div>
-                <app-status-badge [status]="p.status" />
+                <div class="flex flex-col items-end gap-1">
+                  <app-status-badge [status]="p.status" />
+                  @if (p.statusUpdatedAt) {
+                    <span class="text-[11px] text-slate-400 whitespace-nowrap">วันที่แก้ไข {{ formatDateTime(p.statusUpdatedAt) }}</span>
+                  }
+                </div>
                 <div class="flex items-center gap-1">
                   @if (canSetProjectStatus()) {
                     <button
@@ -412,7 +417,12 @@ const TONE_CLASS: Record<string, string> = {
                           }
                         </div>
                       </div>
-                      <app-status-badge [status]="a.status" />
+                      <div class="flex flex-col items-end gap-1">
+                        <app-status-badge [status]="a.status" />
+                        @if (a.statusUpdatedAt) {
+                          <span class="text-[11px] text-slate-400 whitespace-nowrap">วันที่แก้ไข {{ formatDateTime(a.statusUpdatedAt) }}</span>
+                        }
+                      </div>
                       <div class="flex items-center gap-0.5 -mr-1.5">
                         @if (canSetStatus(a)) {
                           <button
@@ -626,6 +636,7 @@ export class ProjectDetail {
   readonly textHalo = '0 0 2px #fff, 0 0 2px #fff, 0 0 2px #fff';
   readonly gridLines = 'linear-gradient(to right, #f1f5f9 1px, transparent 1px)';
   readonly formatDate = formatDateShort;
+  readonly formatDateTime = formatDateTimeShort;
   readonly formatMonth = formatMonthYearThai;
   readonly formatMonthShort = formatMonthYearShort;
   readonly progress = todoProgress;

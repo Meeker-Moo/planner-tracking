@@ -5,6 +5,7 @@ import {
   fiscalYearSpanLabel,
   fiscalYearRangeLabel,
   formatDateThai,
+  formatDateTimeShort,
   formatMonthYearShort,
   formatMonthYearThai,
   isRealIsoDate,
@@ -185,6 +186,12 @@ describe('date helpers', () => {
     expect(formatDateThai('2026-09-19')).toBe('19 กันยายน 2569');
     expect(formatMonthYearThai('2025-10-17')).toBe('ตุลาคม 2568');
     expect(formatMonthYearShort('2025-10-17')).toBe('ต.ค. 68');
+  });
+
+  it('formats a date-time in local time with a 24-hour clock', () => {
+    expect(formatDateTimeShort(new Date(2026, 9, 6, 9, 5).toISOString())).toBe('6 ต.ค. 69 09:05 น.');
+    expect(formatDateTimeShort(undefined)).toBe('');
+    expect(formatDateTimeShort('not a date')).toBe('');
   });
 
   it('snaps a date to the first and last day of its month', () => {

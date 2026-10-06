@@ -86,6 +86,7 @@ export class WorkPlanService {
       ...this.responsible(input),
       id: uid(),
       ownerId: this.auth.user()?.id,
+      statusUpdatedAt: now,
       createdAt: now,
       updatedAt: now,
     };
@@ -103,8 +104,10 @@ export class WorkPlanService {
     if (canEditPlan(user, plan)) changes = { ...input, ...this.responsible(input) };
     else if (canSetPlanStatus(user, plan)) changes = { status: input.status };
     else return;
+    const now = new Date().toISOString();
+    const statusUpdatedAt = changes.status !== undefined && changes.status !== plan.status ? now : plan.statusUpdatedAt;
     this.plansSignal.update((list) =>
-      list.map((p) => (p.id === id ? { ...p, ...changes, ownerId: plan.ownerId, updatedAt: new Date().toISOString() } : p)),
+      list.map((p) => (p.id === id ? { ...p, ...changes, ownerId: plan.ownerId, statusUpdatedAt, updatedAt: now } : p)),
     );
     this.persist();
   }
@@ -143,6 +146,10 @@ export class WorkPlanService {
     } else {
       return;
     }
+    saved = {
+      ...saved,
+      statusUpdatedAt: existing?.status === saved.status ? existing.statusUpdatedAt : new Date().toISOString(),
+    };
     this.setActivities(planId, existing ? activities.map((a) => (a.id === activity.id ? saved : a)) : [...activities, saved]);
   }
 

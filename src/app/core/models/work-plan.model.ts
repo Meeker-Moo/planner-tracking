@@ -19,6 +19,8 @@ export interface Activity {
   startDate: string; // ISO yyyy-MM-dd
   endDate: string; // ISO yyyy-MM-dd
   status: WorkStatus;
+  /** When the status was last set (ISO date-time), kept by WorkPlanService; older saved data has none. */
+  statusUpdatedAt?: string;
   /** Remark (หมายเหตุ), e.g. why the status was changed. */
   note?: string;
   /** The activity's own to-do list; older saved data has none. */
@@ -45,6 +47,8 @@ export interface WorkPlan {
   /** Always the last day of the end month. ISO yyyy-MM-dd */
   endDate: string;
   status: WorkStatus;
+  /** When the status was last set (ISO date-time), kept by WorkPlanService; older saved data has none. */
+  statusUpdatedAt?: string;
   activities?: Activity[];
   /** The account that created the project; missing only on data saved before accounts existed. */
   ownerId?: string;
@@ -52,5 +56,5 @@ export interface WorkPlan {
   updatedAt: string;
 }
 
-/** The owner is set by WorkPlanService, never by a form. */
-export type WorkPlanInput = Omit<WorkPlan, 'id' | 'createdAt' | 'updatedAt' | 'ownerId'>;
+/** The owner and the status time are set by WorkPlanService, never by a form. */
+export type WorkPlanInput = Omit<WorkPlan, 'id' | 'createdAt' | 'updatedAt' | 'ownerId' | 'statusUpdatedAt'>;
