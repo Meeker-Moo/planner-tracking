@@ -1,8 +1,11 @@
-import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { CalendarEvent } from '../../core/models/calendar-event.model';
 import { eventPriority, PriorityMeta } from '../../core/models/status.constant';
 import { eventDayCount, formatDateRange, formatWeekdayDate } from './calendar.util';
+import { OwnerTag } from '../../shared/components/owner-tag/owner-tag';
+import { AuthService } from '../../core/auth/auth.service';
+import { canDelete } from '../../core/auth/permissions';
 
 /** An event together with what its project / activity link resolves to right now. */
 export interface EventView {
@@ -18,7 +21,7 @@ export interface EventView {
 @Component({
   selector: 'app-day-events-dialog',
   standalone: true,
-  imports: [RouterLink],
+  imports: [RouterLink, OwnerTag],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (open()) {
@@ -92,6 +95,7 @@ export interface EventView {
                     @if (v.event.done) {
                       <span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700">ทำแล้ว</span>
                     }
+                    <app-owner-tag [item]="v.event" />
                     @if (dayCount(v.event) > 1) {
                       <span class="inline-flex items-center gap-1 text-xs font-semibold text-slate-500">
                         <svg viewBox="0 0 20 20" class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
@@ -148,17 +152,19 @@ export interface EventView {
                       <path d="M13.5 3.5l3 3L7 16H4v-3l9.5-9.5z" stroke-linejoin="round" />
                     </svg>
                   </button>
-                  <button
-                    type="button"
-                    class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50"
-                    [attr.aria-label]="'ลบ ' + v.event.title"
-                    title="ลบ"
-                    (click)="remove.emit(v.event)"
-                  >
-                    <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                      <path d="M4 6h12M8 6V4h4v2M6 6l.7 10h6.6L14 6" stroke-linecap="round" stroke-linejoin="round" />
-                    </svg>
-                  </button>
+                  @if (canDelete(v.event)) {
+                    <button
+                      type="button"
+                      class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50"
+                      [attr.aria-label]="'ลบ ' + v.event.title"
+                      title="ลบ"
+                      (click)="remove.emit(v.event)"
+                    >
+                      <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                        <path d="M4 6h12M8 6V4h4v2M6 6l.7 10h6.6L14 6" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                    </button>
+                  }
                 </div>
               </article>
             } @empty {
@@ -206,7 +212,14 @@ export class DayEventsDialog {
   toggleDone = output<CalendarEvent>();
   close = output<void>();
 
+  private readonly auth = inject(AuthService);
+
   heading = () => formatWeekdayDate(this.date());
+
+  /** An assignee may edit an event but not delete it. */
+  canDelete(event: CalendarEvent): boolean {
+    return canDelete(this.auth.user(), event);
+  }
 
   doneCount = computed(() => this.views().filter((v) => v.event.done).length);
   donePercent = computed(() => (this.views().length ? (this.doneCount() / this.views().length) * 100 : 0));

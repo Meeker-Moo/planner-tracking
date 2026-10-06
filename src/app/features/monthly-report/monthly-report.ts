@@ -12,9 +12,7 @@ import {
   THAI_WEEKDAYS_SHORT,
 } from '../../core/models/status.constant';
 import { monthEndIso, toIsoDate, todayIso } from '../../shared/utils/date.util';
-import { downloadBlob } from '../../shared/utils/file.util';
 import { buildMonthGrid, CalendarDay, eventDayCount, eventOverlaps, eventsOnDay, formatDateRange, groupEventsByDate } from './calendar.util';
-import { parseEventsFile, serializeEvents } from './event-file.util';
 import { DayEventsDialog, EventView } from './day-events-dialog';
 import { EventFormDialog } from './event-form-dialog';
 
@@ -28,7 +26,7 @@ const MAX_EVENTS_IN_CELL = 3;
   imports: [Toolbar, ConfirmDialog, DayEventsDialog, EventFormDialog],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <app-toolbar [showActions]="false" [showYear]="false" />
+    <app-toolbar [showActions]="false" [showYear]="false" [showOwnerFilter]="true" />
 
     <div class="grow overflow-auto p-4 md:p-8">
       <div class="max-w-6xl mx-auto flex flex-col gap-5">
@@ -47,27 +45,6 @@ const MAX_EVENTS_IN_CELL = 3;
               <p class="text-sm text-slate-500">กดที่ช่องวันเพื่อดู เพิ่ม แก้ไข หรือลบ Event ของวันนั้น</p>
             </div>
           </div>
-          <button
-            type="button"
-            class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white ring-1 ring-slate-200 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-            (click)="fileInput.click()"
-          >
-            <svg viewBox="0 0 20 20" class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-              <path d="M10 13V3M6 7l4-4 4 4M4 13v2.5A1.5 1.5 0 005.5 17h9a1.5 1.5 0 001.5-1.5V13" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            นำเข้า JSON
-          </button>
-          <button
-            type="button"
-            class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white ring-1 ring-slate-200 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-            (click)="exportJson()"
-          >
-            <svg viewBox="0 0 20 20" class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-              <path d="M10 3v10M6 9l4 4 4-4M4 13v2.5A1.5 1.5 0 005.5 17h9a1.5 1.5 0 001.5-1.5V13" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            ส่งออก JSON
-          </button>
-          <input #fileInput type="file" accept="application/json,.json" class="hidden" (change)="onFileSelected($event)" />
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -266,34 +243,6 @@ const MAX_EVENTS_IN_CELL = 3;
       (confirm)="confirmDelete()"
       (cancel)="deleteTarget.set(null)"
     />
-
-    @if (importPending()) {
-      <div class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-70 p-4">
-        <div class="w-full max-w-sm bg-white rounded-3xl shadow-2xl ring-1 ring-slate-900/5 p-6 flex flex-col gap-4">
-          <h2 class="text-lg font-bold text-slate-900">นำเข้า Event จาก JSON</h2>
-          <p class="text-sm text-slate-600">
-            พบ {{ importPending()!.length }} Event ในไฟล์ ต้องการแทนที่ Event เดิมทั้งหมด หรือผสานเข้ากับ Event ที่มีอยู่?
-          </p>
-          <div class="flex flex-col gap-2">
-            <button
-              type="button"
-              class="px-4 py-2.5 rounded-xl bg-blue-600 text-sm font-bold text-white shadow-sm shadow-blue-600/30 hover:bg-blue-700"
-              (click)="confirmImport('merge')"
-            >
-              ผสานกับข้อมูลเดิม
-            </button>
-            <button
-              type="button"
-              class="px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-              (click)="confirmImport('replace')"
-            >
-              แทนที่ทั้งหมด
-            </button>
-            <button type="button" class="px-4 py-2.5 text-sm font-semibold text-slate-500" (click)="importPending.set(null)">ยกเลิก</button>
-          </div>
-        </div>
-      </div>
-    }
   `,
 })
 export class MonthlyReport {
@@ -313,7 +262,6 @@ export class MonthlyReport {
   editingEvent = signal<CalendarEvent | null>(null);
   formDate = signal('');
   deleteTarget = signal<CalendarEvent | null>(null);
-  importPending = signal<CalendarEvent[] | null>(null);
 
   weeks = computed(() => buildMonthGrid(this.viewYear(), this.viewMonth()));
   monthTitle = computed(() => `${THAI_MONTHS_FULL[this.viewMonth()]} ${this.viewYear() + 543}`);
@@ -441,34 +389,6 @@ export class MonthlyReport {
     const target = this.deleteTarget();
     if (target) this.eventService.delete(target.id);
     this.deleteTarget.set(null);
-  }
-
-  exportJson(): void {
-    const blob = new Blob([serializeEvents(this.eventService.events())], { type: 'application/json' });
-    downloadBlob(blob, `monthly-report-events-${this.today}.json`);
-  }
-
-  async onFileSelected(event: Event): Promise<void> {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = '';
-    if (!file) return;
-    try {
-      this.importPending.set(parseEventsFile(await file.text()));
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'นำเข้าไฟล์ไม่สำเร็จ');
-    }
-  }
-
-  confirmImport(mode: 'merge' | 'replace'): void {
-    const events = this.importPending();
-    if (!events) return;
-    if (mode === 'replace') {
-      this.eventService.replaceAll(events);
-    } else {
-      this.eventService.mergeAll(events);
-    }
-    this.importPending.set(null);
   }
 
   private toView(event: CalendarEvent): EventView {

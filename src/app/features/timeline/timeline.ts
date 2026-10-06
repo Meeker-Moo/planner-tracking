@@ -4,7 +4,7 @@ import { StatusBadge } from '../../shared/components/status-badge/status-badge';
 import { PlanFormDialog } from '../plan-list/plan-form-dialog/plan-form-dialog';
 import { WorkPlanService } from '../../core/services/work-plan.service';
 import { FiscalYearStateService } from '../../core/services/fiscal-year-state.service';
-import { ExportImportService } from '../../core/services/export-import.service';
+import { ExcelExportService } from '../../core/services/excel-export.service';
 import { STATUS_LIST, THAI_MONTHS, STATUS_MAP } from '../../core/models/status.constant';
 import { Activity, WorkPlan, WorkPlanInput, WorkStatus } from '../../core/models/work-plan.model';
 import {
@@ -60,13 +60,12 @@ function tipLines(lines: [string, string | undefined][]): TimelineTip['lines'] {
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <app-toolbar
+      [showOwnerFilter]="true"
       [years]="workPlanService.years()"
       [selectedYear]="selectedYear()"
       (yearChange)="selectedYear.set($event)"
       (addClick)="formOpen.set(true)"
-      (importJson)="onImportJson($event)"
-      (exportJson)="exportImportService.exportJson(plansInYear(), selectedYear())"
-      (exportExcel)="exportImportService.exportExcel(plansInYear(), selectedYear())"
+      (exportExcel)="excelExport.exportExcel(plansInYear(), selectedYear())"
     />
 
     <div class="shrink-0 bg-white border-b border-slate-200 flex flex-wrap items-center gap-4 md:gap-6 px-4 md:px-8 py-3.5">
@@ -208,33 +207,11 @@ function tipLines(lines: [string, string | undefined][]): TimelineTip['lines'] {
     }
 
     <app-plan-form-dialog [open]="formOpen()" [editing]="null" (save)="onSave($event)" (cancel)="formOpen.set(false)" />
-
-    @if (importPending()) {
-      <div class="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
-        <div class="w-full max-w-sm bg-white rounded-2xl shadow-2xl p-6 flex flex-col gap-4">
-          <h2 class="text-lg font-bold text-slate-900">นำเข้าข้อมูล JSON</h2>
-          <p class="text-sm text-slate-600">
-            พบ {{ importPending()!.length }} รายการในไฟล์ ต้องการแทนที่ข้อมูลเดิมทั้งหมด หรือผสานเข้ากับข้อมูลที่มีอยู่?
-          </p>
-          <div class="flex flex-col gap-2">
-            <button type="button" class="px-4 py-2.5 rounded-lg bg-blue-600 text-sm font-bold text-white" (click)="confirmImport('merge')">
-              ผสานกับข้อมูลเดิม
-            </button>
-            <button type="button" class="px-4 py-2.5 rounded-lg border border-slate-200 text-sm font-semibold text-slate-700" (click)="confirmImport('replace')">
-              แทนที่ทั้งหมด
-            </button>
-            <button type="button" class="px-4 py-2.5 text-sm font-semibold text-slate-500" (click)="importPending.set(null)">
-              ยกเลิก
-            </button>
-          </div>
-        </div>
-      </div>
-    }
   `,
 })
 export class Timeline {
   readonly workPlanService = inject(WorkPlanService);
-  readonly exportImportService = inject(ExportImportService);
+  readonly excelExport = inject(ExcelExportService);
 
   readonly statusList = STATUS_LIST;
   readonly fiscalRange = fiscalYearRangeLabel;
@@ -250,7 +227,6 @@ export class Timeline {
   /** A quarter of the selected fiscal year to zoom in on, or null for the whole year. */
   quarter = signal<number | null>(null);
   formOpen = signal(false);
-  importPending = signal<WorkPlan[] | null>(null);
   tip = signal<TipPlacement | null>(null);
 
   plansInYear = computed(() => this.workPlanService.plans().filter((p) => p.year === this.selectedYear()));
@@ -418,25 +394,5 @@ export class Timeline {
   onSave(input: WorkPlanInput): void {
     this.workPlanService.add(input);
     this.formOpen.set(false);
-  }
-
-  async onImportJson(file: File): Promise<void> {
-    try {
-      const plans = await this.exportImportService.importJson(file);
-      this.importPending.set(plans);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'นำเข้าไฟล์ไม่สำเร็จ');
-    }
-  }
-
-  confirmImport(mode: 'merge' | 'replace'): void {
-    const plans = this.importPending();
-    if (!plans) return;
-    if (mode === 'replace') {
-      this.workPlanService.replaceAll(plans);
-    } else {
-      this.workPlanService.mergeAll(plans);
-    }
-    this.importPending.set(null);
   }
 }

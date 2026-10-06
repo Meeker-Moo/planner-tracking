@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { CalendarEventInput } from '../models/calendar-event.model';
 import { EventService, upgradeSavedEvent } from './event.service';
+import { freshTestBed } from '../auth/auth.testing';
 
 const input: CalendarEventInput = {
   startDate: '2026-09-17',
@@ -13,7 +14,7 @@ describe('EventService', () => {
 
   beforeEach(() => {
     localStorage.clear();
-    TestBed.configureTestingModule({});
+    freshTestBed('u-admin');
     service = TestBed.inject(EventService);
   });
 
@@ -54,23 +55,11 @@ describe('EventService', () => {
     expect(service.events().find((e) => e.id === one.id)?.done).toBe(false);
   });
 
-  it('merges by id and replaces everything', () => {
-    const one = service.add(input);
-    const incoming = [
-      { ...one, title: 'เปลี่ยนชื่อ' },
-      { ...one, id: 'new', title: 'ใหม่' },
-    ];
-    service.mergeAll(incoming);
-    expect(service.events().map((e) => e.title)).toEqual(['เปลี่ยนชื่อ', 'ใหม่']);
-    service.replaceAll([incoming[1]]);
-    expect(service.events().map((e) => e.id)).toEqual(['new']);
-  });
-
   it('saves to localStorage and reads it back', () => {
     service.add(input);
     expect(JSON.parse(localStorage.getItem('awp:events:v1') ?? '[]')).toHaveLength(1);
 
-    TestBed.resetTestingModule();
+    freshTestBed('u-admin');
     const reloaded = TestBed.inject(EventService);
     expect(reloaded.events()).toHaveLength(1);
   });
@@ -78,14 +67,44 @@ describe('EventService', () => {
   it('reads events saved before date ranges and the four priorities', () => {
     const old = { id: 'o', date: '2026-09-17', startTime: '09:00', endTime: '10:00', title: 'เก่า', priority: 'high', createdAt: '', updatedAt: '' };
     localStorage.setItem('awp:events:v1', JSON.stringify([old, { ...old, id: 'm', priority: 'medium' }]));
-    TestBed.resetTestingModule();
+    freshTestBed('u-admin');
     const [first, second] = TestBed.inject(EventService).events();
-    expect(first).toEqual({ id: 'o', startDate: '2026-09-17', endDate: '2026-09-17', title: 'เก่า', priority: 'urgent', createdAt: '', updatedAt: '' });
+    expect(first).toEqual({ id: 'o', startDate: '2026-09-17', endDate: '2026-09-17', title: 'เก่า', priority: 'urgent', ownerId: 'u-admin', createdAt: '', updatedAt: '' });
     expect(second.priority).toBe('normal');
   });
 
   it('leaves an event already in the current shape alone', () => {
     const current = { ...input, id: 'c', priority: 'adhoc' as const, endDate: '2026-09-20', createdAt: '', updatedAt: '' };
     expect(upgradeSavedEvent(current)).toEqual(current);
+  });
+});
+
+describe('EventService ownership', () => {
+  function as(userId: string): EventService {
+    freshTestBed(userId);
+    return TestBed.inject(EventService);
+  }
+
+  beforeEach(() => localStorage.clear());
+
+  it('shows a User their own and assigned events, and lets an assignee tick but not delete', () => {
+    const user1 = as('u-user1');
+    const shared = user1.add({ ...input, assigneeIds: ['u-user2'] });
+    user1.add({ ...input, title: 'ส่วนตัว' });
+
+    const user2 = as('u-user2');
+    expect(user2.events().map((e) => e.id)).toEqual([shared.id]);
+    user2.setDone(shared.id, true);
+    user2.update(shared.id, { ...input, title: 'แก้โดย user2', done: true, assigneeIds: [] });
+    user2.delete(shared.id);
+    expect(user2.events()[0]).toMatchObject({ title: 'แก้โดย user2', done: true, ownerId: 'u-user1', assigneeIds: ['u-user2'] });
+  });
+
+  it('lets the owner and Admin delete', () => {
+    const event = as('u-user1').add(input);
+    const admin = as('u-admin');
+    expect(admin.events()).toHaveLength(1);
+    admin.delete(event.id);
+    expect(as('u-user1').events()).toEqual([]);
   });
 });

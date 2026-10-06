@@ -1,9 +1,12 @@
-import { ChangeDetectionStrategy, Component, computed, effect, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CalendarEvent, CalendarEventInput, EventPriority } from '../../core/models/calendar-event.model';
 import { DEFAULT_EVENT_PRIORITY, EVENT_PRIORITY_LIST } from '../../core/models/status.constant';
 import { WorkPlan } from '../../core/models/work-plan.model';
 import { ThaiDatePicker } from '../../shared/components/thai-date-picker/thai-date-picker';
+import { AssigneePicker } from '../../shared/components/assignee-picker/assignee-picker';
+import { AuthService } from '../../core/auth/auth.service';
+import { canReassign } from '../../core/auth/permissions';
 import { eventDayCount } from './calendar.util';
 
 interface Option {
@@ -15,7 +18,7 @@ interface Option {
 @Component({
   selector: 'app-event-form-dialog',
   standalone: true,
-  imports: [FormsModule, ThaiDatePicker],
+  imports: [FormsModule, ThaiDatePicker, AssigneePicker],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (open()) {
@@ -96,6 +99,13 @@ interface Option {
                 [(ngModel)]="description"
               ></textarea>
             </label>
+
+            <app-assignee-picker
+              [value]="assigneeIds()"
+              [ownerId]="ownerId()"
+              [disabled]="!assigneesEditable()"
+              (valueChange)="assigneeIds.set($event)"
+            />
 
             <button
               type="button"
@@ -193,6 +203,15 @@ export class EventFormDialog {
   endDate = signal('');
   projectId = signal('');
   activityId = signal('');
+  assigneeIds = signal<string[]>([]);
+
+  private readonly auth = inject(AuthService);
+  /** The event's owner, or the signed-in account for a new one. */
+  ownerId = computed(() => this.editing()?.ownerId ?? this.auth.user()?.id);
+  assigneesEditable = computed(() => {
+    const e = this.editing();
+    return !e || canReassign(this.auth.user(), e);
+  });
 
   dateError = computed(() =>
     this.startDate() && this.endDate() && this.endDate() < this.startDate() ? 'วันสิ้นสุดต้องไม่ก่อนวันเริ่มต้น' : '',
@@ -239,6 +258,7 @@ export class EventFormDialog {
         this.endDate.set(e.endDate);
         this.projectId.set(e.projectId ?? '');
         this.activityId.set(e.activityId ?? '');
+        this.assigneeIds.set(e.assigneeIds ?? []);
       } else {
         this.title.set('');
         this.description.set('');
@@ -248,6 +268,7 @@ export class EventFormDialog {
         this.endDate.set(this.defaultDate());
         this.projectId.set('');
         this.activityId.set('');
+        this.assigneeIds.set([]);
       }
     });
   }
@@ -288,6 +309,7 @@ export class EventFormDialog {
       projectName: projectId ? (project?.name ?? (sameProject ? original?.projectName : undefined)) : undefined,
       activityId: activityId || undefined,
       activityName: activityId ? (activity?.name ?? (sameActivity ? original?.activityName : undefined)) : undefined,
+      assigneeIds: this.assigneeIds(),
     });
   }
 }

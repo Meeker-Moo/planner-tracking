@@ -1,8 +1,13 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { AuthService, safeReturnUrl } from '../../core/auth/auth.service';
+import { AuthService, homeUrlFor, safeReturnUrl } from '../../core/auth/auth.service';
+import { SEED_USERS } from '../../core/auth/auth.config';
+import { ROLE_BADGE_CLASS, ROLE_LABELS, authErrorMessage } from '../../core/auth/user.model';
 
-/** Sign in with the fixed account, then go back to the page that asked for it (or the dashboard). */
+/**
+ * Sign in, then go back to the page that asked for it (or the account's start page). An account with a
+ * one-time password goes on to the change-password page first (authGuard sees to that).
+ */
 @Component({
   selector: 'app-login',
   standalone: true,
@@ -91,6 +96,25 @@ import { AuthService, safeReturnUrl } from '../../core/auth/auth.service';
           </button>
         </form>
 
+        @if (devAccounts.length) {
+          <div class="bg-white/70 rounded-2xl ring-1 ring-slate-900/5 p-4 flex flex-col gap-2">
+            <p class="text-xs font-semibold text-slate-500">บัญชีทดสอบ (develop) · คลิกเพื่อกรอก</p>
+            <div class="flex flex-col gap-1">
+              @for (a of devAccounts; track a.username) {
+                <button
+                  type="button"
+                  class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-sm hover:bg-white"
+                  (click)="fill(a.username, a.devPassword!)"
+                >
+                  <span class="rounded-md px-1.5 py-0.5 text-[11px] font-bold" [class]="roleBadge[a.role]">{{ roleLabels[a.role] }}</span>
+                  <span class="font-semibold text-slate-800">{{ a.username }}</span>
+                  <span class="text-slate-400">/ {{ a.devPassword }}</span>
+                </button>
+              }
+            </div>
+          </div>
+        }
+
         <a routerLink="/excel" class="text-center text-sm font-semibold text-slate-500 hover:text-slate-800">← กลับไปหน้า Excel Compare</a>
       </div>
     </div>
@@ -108,6 +132,17 @@ export class Login {
   busy = signal(false);
   error = signal('');
 
+  /** The develop environment's test accounts (none in production). */
+  readonly devAccounts = inject(SEED_USERS).filter((a) => a.devPassword);
+  readonly roleLabels = ROLE_LABELS;
+  readonly roleBadge = ROLE_BADGE_CLASS;
+
+  fill(username: string, password: string): void {
+    this.username.set(username);
+    this.password.set(password);
+    this.error.set('');
+  }
+
   /** Whether the user was sent here by trying to open a locked page. */
   fromPage(): boolean {
     return !!this.returnUrl;
@@ -118,10 +153,11 @@ export class Login {
     if (this.busy() || !this.username().trim() || !this.password()) return;
     this.busy.set(true);
     try {
-      if (await this.auth.login(this.username(), this.password(), this.remember())) {
-        await this.router.navigateByUrl(safeReturnUrl(this.returnUrl));
+      const result = await this.auth.login(this.username(), this.password(), this.remember());
+      if (result.ok) {
+        await this.router.navigateByUrl(safeReturnUrl(this.returnUrl, homeUrlFor(result.user)));
       } else {
-        this.error.set('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+        this.error.set(authErrorMessage(result.error));
         this.password.set('');
       }
     } catch {

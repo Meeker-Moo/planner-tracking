@@ -22,7 +22,7 @@ const COLUMN_MAX_HEIGHT_PX = 120;
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <app-toolbar
-      [years]="workPlanService.years()"
+      [years]="workPlanService.allYears()"
       [selectedYear]="selectedYear()"
       [showActions]="false"
       (yearChange)="selectedYear.set($event)"
@@ -224,7 +224,8 @@ export class Dashboard {
   /** Shared with the other pages, so the year chosen here stays chosen when moving between them. */
   readonly selectedYear = inject(FiscalYearStateService).year;
 
-  summary = computed(() => summarizeYear(this.workPlanService.plans(), this.selectedYear(), this.today));
+  // Every project, for every role: the overview is the same for Admin and User (see WorkPlanService.allPlans).
+  summary = computed(() => summarizeYear(this.workPlanService.allPlans(), this.selectedYear(), this.today));
 
   overdueCount = computed(() => this.summary().attention.filter((i) => i.reason === 'overdue').length);
 

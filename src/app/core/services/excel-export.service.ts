@@ -1,90 +1,31 @@
-import { Injectable } from '@angular/core';
-import { Activity, TodoItem, WorkPlan } from '../models/work-plan.model';
+import { Injectable, signal } from '@angular/core';
+import { WorkPlan } from '../models/work-plan.model';
 import { STATUS_MAP } from '../models/status.constant';
-import {
-  fiscalYearRangeLabel,
-  formatDateThai,
-  formatMonthYearThai,
-  withFiscalYear,
-} from '../../shared/utils/date.util';
+import { fiscalYearRangeLabel, formatDateThai, formatMonthYearThai } from '../../shared/utils/date.util';
 import { todoProgress } from '../../shared/utils/activity.util';
 import { downloadBlob } from '../../shared/utils/file.util';
 import { loadExcelJs } from '../../shared/utils/exceljs.util';
-import { uid } from '../../shared/utils/id.util';
 import { renderTimelineImage } from '../../features/timeline/timeline-image';
 import { buildTimelineLayout } from '../../features/timeline/timeline.util';
 
-function isTodo(item: unknown): boolean {
-  return !!item && typeof item === 'object' && typeof (item as TodoItem).text === 'string';
-}
-
-function isActivity(item: unknown): boolean {
-  return (
-    !!item &&
-    typeof item === 'object' &&
-    typeof (item as Activity).name === 'string' &&
-    typeof (item as Activity).startDate === 'string' &&
-    typeof (item as Activity).endDate === 'string' &&
-    ((item as Activity).todos === undefined ||
-      (Array.isArray((item as Activity).todos) && (item as Activity).todos!.every(isTodo)))
-  );
-}
-
-/** Hand-written files may lack ids or the done flag on activities and their to-do items. */
-function normalizeActivity(activity: Activity): Activity {
-  return {
-    ...activity,
-    id: activity.id ?? uid(),
-    todos: activity.todos?.map((t) => ({ ...t, id: t.id ?? uid(), done: !!t.done })),
-  };
-}
-
+/**
+ * The project list as an Excel file. The data itself lives in the app's store (and later the database),
+ * so there is no JSON import or export any more.
+ */
 @Injectable({ providedIn: 'root' })
-export class ExportImportService {
-  exportJson(plans: WorkPlan[], year: number): void {
-    const blob = new Blob([JSON.stringify(plans, null, 2)], { type: 'application/json' });
-    this.download(blob, `annual-work-plan-${year}.json`);
-  }
+export class ExcelExportService {
+  private readonly busySignal = signal(false);
 
-  async importJson(file: File): Promise<WorkPlan[]> {
-    const text = await file.text();
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      throw new Error('ไฟล์ไม่ใช่ JSON ที่ถูกต้อง');
-    }
-    if (!Array.isArray(parsed)) {
-      throw new Error('รูปแบบ JSON ต้องเป็น array ของโครงการ');
-    }
-    const valid = parsed.every(
-      (item) =>
-        item &&
-        typeof item === 'object' &&
-        typeof (item as WorkPlan).name === 'string' &&
-        typeof (item as WorkPlan).startDate === 'string' &&
-        typeof (item as WorkPlan).endDate === 'string',
-    );
-    if (!valid) {
-      throw new Error('ข้อมูลบางรายการไม่ครบฟิลด์ที่จำเป็น (name, startDate, endDate)');
-    }
-    const activitiesValid = (parsed as WorkPlan[]).every(
-      (p) => p.activities === undefined || (Array.isArray(p.activities) && p.activities.every(isActivity)),
-    );
-    if (!activitiesValid) {
-      throw new Error('ข้อมูลกิจกรรมย่อยบางรายการไม่ครบฟิลด์ที่จำเป็น (name, startDate, endDate, todos[].text)');
-    }
-    // Files from older versions carry a calendar year and no activities.
-    return (parsed as WorkPlan[]).map((p) =>
-      withFiscalYear(p.activities ? { ...p, activities: p.activities.map(normalizeActivity) } : p),
-    );
-  }
+  /** True while a file is being built (loading ExcelJS and drawing the timeline can take a moment). */
+  readonly busy = this.busySignal.asReadonly();
 
   /**
    * Sheets: the projects, their sub-activities (if any), and a picture of the timeline — the same
    * months and bars as the Timeline page, widened over every fiscal year a project runs into.
    */
   async exportExcel(plans: WorkPlan[], year: number): Promise<void> {
+    if (this.busySignal()) return;
+    this.busySignal.set(true);
     try {
       const layout = buildTimelineLayout(plans, year);
       const [{ Workbook }, timeline] = await Promise.all([loadExcelJs(), renderTimelineImage(layout, year)]);
@@ -175,6 +116,8 @@ export class ExportImportService {
       );
     } catch (err) {
       alert(`ส่งออก Excel ไม่สำเร็จ: ${err instanceof Error ? err.message : 'เกิดข้อผิดพลาด'}`);
+    } finally {
+      this.busySignal.set(false);
     }
   }
 

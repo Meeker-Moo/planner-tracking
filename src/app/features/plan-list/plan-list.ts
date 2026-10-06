@@ -5,7 +5,7 @@ import { ConfirmDialog } from '../../shared/components/confirm-dialog/confirm-di
 import { PlanFormDialog } from './plan-form-dialog/plan-form-dialog';
 import { PlanTable } from './plan-table/plan-table';
 import { WorkPlanService } from '../../core/services/work-plan.service';
-import { ExportImportService } from '../../core/services/export-import.service';
+import { ExcelExportService } from '../../core/services/excel-export.service';
 import { FiscalYearStateService, ListSpan } from '../../core/services/fiscal-year-state.service';
 import { STATUS_LIST, THAI_MONTHS_FULL, WORK_TYPES } from '../../core/models/status.constant';
 import { WorkPlan, WorkPlanInput, WorkStatus } from '../../core/models/work-plan.model';
@@ -27,13 +27,12 @@ const SPAN_OPTIONS: { value: ListSpan; label: string }[] = [
   host: { class: 'grow flex flex-col min-h-0' },
   template: `
     <app-toolbar
+      [showOwnerFilter]="true"
       [years]="workPlanService.years()"
       [selectedYear]="selectedYear()"
       (yearChange)="selectedYear.set($event)"
       (addClick)="openAdd()"
-      (importJson)="onImportJson($event)"
-      (exportJson)="exportImportService.exportJson(visiblePlans(), selectedYear())"
-      (exportExcel)="exportImportService.exportExcel(visiblePlans(), selectedYear())"
+      (exportExcel)="excelExport.exportExcel(visiblePlans(), selectedYear())"
     />
 
     <div class="grow overflow-auto">
@@ -232,33 +231,11 @@ const SPAN_OPTIONS: { value: ListSpan; label: string }[] = [
       (confirm)="confirmDelete()"
       (cancel)="deleteTarget.set(null)"
     />
-
-    @if (importPending()) {
-      <div class="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
-        <div class="w-full max-w-sm bg-white rounded-2xl shadow-2xl p-6 flex flex-col gap-4">
-          <h2 class="text-lg font-bold text-slate-900">นำเข้าข้อมูล JSON</h2>
-          <p class="text-sm text-slate-600">
-            พบ {{ importPending()!.length }} รายการในไฟล์ ต้องการแทนที่ข้อมูลเดิมทั้งหมด หรือผสานเข้ากับข้อมูลที่มีอยู่?
-          </p>
-          <div class="flex flex-col gap-2">
-            <button type="button" class="px-4 py-2.5 rounded-lg bg-blue-600 text-sm font-bold text-white" (click)="confirmImport('merge')">
-              ผสานกับข้อมูลเดิม
-            </button>
-            <button type="button" class="px-4 py-2.5 rounded-lg border border-slate-200 text-sm font-semibold text-slate-700" (click)="confirmImport('replace')">
-              แทนที่ทั้งหมด
-            </button>
-            <button type="button" class="px-4 py-2.5 text-sm font-semibold text-slate-500" (click)="importPending.set(null)">
-              ยกเลิก
-            </button>
-          </div>
-        </div>
-      </div>
-    }
   `,
 })
 export class PlanList {
   readonly workPlanService = inject(WorkPlanService);
-  readonly exportImportService = inject(ExportImportService);
+  readonly excelExport = inject(ExcelExportService);
   readonly yearState = inject(FiscalYearStateService);
 
   readonly statusList = STATUS_LIST;
@@ -276,7 +253,6 @@ export class PlanList {
   formOpen = signal(false);
   editingPlan = signal<WorkPlan | null>(null);
   deleteTarget = signal<WorkPlan | null>(null);
-  importPending = signal<WorkPlan[] | null>(null);
   expandedIds = signal<ReadonlySet<string>>(new Set());
 
   private filters = computed<PlanFilters>(() => ({
@@ -422,25 +398,5 @@ export class PlanList {
       this.workPlanService.delete(target.id);
     }
     this.deleteTarget.set(null);
-  }
-
-  async onImportJson(file: File): Promise<void> {
-    try {
-      const plans = await this.exportImportService.importJson(file);
-      this.importPending.set(plans);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'นำเข้าไฟล์ไม่สำเร็จ');
-    }
-  }
-
-  confirmImport(mode: 'merge' | 'replace'): void {
-    const plans = this.importPending();
-    if (!plans) return;
-    if (mode === 'replace') {
-      this.workPlanService.replaceAll(plans);
-    } else {
-      this.workPlanService.mergeAll(plans);
-    }
-    this.importPending.set(null);
   }
 }

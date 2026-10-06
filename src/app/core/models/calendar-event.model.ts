@@ -20,8 +20,13 @@ export interface CalendarEvent {
   projectName?: string;
   activityId?: string;
   activityName?: string;
+  /** The account that created the event; missing only on data saved before accounts existed. */
+  ownerId?: string;
+  /** USER accounts that may also see and edit the event (but not delete it). */
+  assigneeIds?: string[];
   createdAt: string;
   updatedAt: string;
 }
 
-export type CalendarEventInput = Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt'>;
+/** The owner is set by EventService, never by a form. */
+export type CalendarEventInput = Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt' | 'ownerId'>;

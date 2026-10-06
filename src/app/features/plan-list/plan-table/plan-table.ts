@@ -1,6 +1,9 @@
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, input, output } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { StatusBadge } from '../../../shared/components/status-badge/status-badge';
+import { OwnerTag } from '../../../shared/components/owner-tag/owner-tag';
+import { AuthService } from '../../../core/auth/auth.service';
+import { canEditPlan, canSetPlanStatus } from '../../../core/auth/permissions';
 import { Activity, WorkPlan } from '../../../core/models/work-plan.model';
 import { todoProgress } from '../../../shared/utils/activity.util';
 import {
@@ -16,7 +19,7 @@ import { PlanGroup, PlanRow } from '../plan-list.util';
 @Component({
   selector: 'app-plan-table',
   standalone: true,
-  imports: [RouterLink, StatusBadge],
+  imports: [RouterLink, StatusBadge, OwnerTag],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <!-- Wide screens: table -->
@@ -77,6 +80,7 @@ import { PlanGroup, PlanRow } from '../plan-list.util';
                       >
                         {{ item.name }}
                       </a>
+                      <app-owner-tag class="ml-1.5 align-middle" [item]="item" />
                       @if (row.carriedFrom !== null) {
                         <span class="ml-1.5 inline-flex items-center gap-1 align-middle rounded-md bg-indigo-50 text-indigo-700 text-[11px] font-semibold px-1.5 py-0.5" title="โครงการเริ่มในปีงบประมาณ {{ row.carriedFrom }} และยังดำเนินต่อเนื่องถึงปีนี้">
                           <svg viewBox="0 0 20 20" class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -123,16 +127,20 @@ import { PlanGroup, PlanRow } from '../plan-list.util';
                         <path d="M2.5 10s2.7-5.5 7.5-5.5 7.5 5.5 7.5 5.5-2.7 5.5-7.5 5.5S2.5 10 2.5 10z" /><circle cx="10" cy="10" r="2.3" />
                       </svg>
                     </a>
-                    <button type="button" class="w-8 h-8 inline-flex items-center justify-center rounded-lg text-blue-600 hover:bg-blue-50 outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60" title="แก้ไข" [attr.aria-label]="'แก้ไข ' + item.name" (click)="edit.emit(item)">
-                      <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                        <path d="M13.5 3.5l3 3L7 16H4v-3l9.5-9.5z" stroke-linejoin="round" />
-                      </svg>
-                    </button>
-                    <button type="button" class="w-8 h-8 inline-flex items-center justify-center rounded-lg text-red-600 hover:bg-red-50 outline-none focus-visible:ring-2 focus-visible:ring-red-500/60" title="ลบ" [attr.aria-label]="'ลบ ' + item.name" (click)="remove.emit(item)">
-                      <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                        <path d="M4 6h12M8 6V4.5h4V6M6 6l.7 10h6.6L14 6" stroke-linecap="round" stroke-linejoin="round" />
-                      </svg>
-                    </button>
+                    @if (canSetStatus(item)) {
+                      <button type="button" class="w-8 h-8 inline-flex items-center justify-center rounded-lg text-blue-600 hover:bg-blue-50 outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60" [title]="editLabel(item)" [attr.aria-label]="editLabel(item) + ' ' + item.name" (click)="edit.emit(item)">
+                        <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                          <path d="M13.5 3.5l3 3L7 16H4v-3l9.5-9.5z" stroke-linejoin="round" />
+                        </svg>
+                      </button>
+                    }
+                    @if (canDelete(item)) {
+                      <button type="button" class="w-8 h-8 inline-flex items-center justify-center rounded-lg text-red-600 hover:bg-red-50 outline-none focus-visible:ring-2 focus-visible:ring-red-500/60" title="ลบ" [attr.aria-label]="'ลบ ' + item.name" (click)="remove.emit(item)">
+                        <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                          <path d="M4 6h12M8 6V4.5h4V6M6 6l.7 10h6.6L14 6" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </button>
+                    }
                   </div>
                 </td>
               </tr>
@@ -186,6 +194,7 @@ import { PlanGroup, PlanRow } from '../plan-list.util';
               <a [routerLink]="['/plans', item.id]" class="font-semibold text-slate-900 hover:text-blue-600">{{ item.name }}</a>
               <app-status-badge [status]="item.status" />
             </div>
+            <app-owner-tag [item]="item" />
             @if (row.carriedFrom !== null) {
               <span class="w-fit rounded-md bg-indigo-50 text-indigo-700 text-[11px] font-semibold px-1.5 py-0.5">ต่อเนื่องจากปีงบ {{ row.carriedFrom }}</span>
             }
@@ -233,8 +242,12 @@ import { PlanGroup, PlanRow } from '../plan-list.util';
             }
             <div class="flex items-center justify-end gap-1 border-t border-slate-100 pt-2.5 -mb-1">
               <a [routerLink]="['/plans', item.id]" class="px-3 py-1.5 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-100">รายละเอียด</a>
-              <button type="button" class="px-3 py-1.5 rounded-lg text-sm font-semibold text-blue-600 hover:bg-blue-50" (click)="edit.emit(item)">แก้ไข</button>
-              <button type="button" class="px-3 py-1.5 rounded-lg text-sm font-semibold text-red-600 hover:bg-red-50" (click)="remove.emit(item)">ลบ</button>
+              @if (canSetStatus(item)) {
+                <button type="button" class="px-3 py-1.5 rounded-lg text-sm font-semibold text-blue-600 hover:bg-blue-50" (click)="edit.emit(item)">{{ editLabel(item) }}</button>
+              }
+              @if (canDelete(item)) {
+                <button type="button" class="px-3 py-1.5 rounded-lg text-sm font-semibold text-red-600 hover:bg-red-50" (click)="remove.emit(item)">ลบ</button>
+              }
             </div>
           </article>
         }
@@ -252,11 +265,27 @@ export class PlanTable {
   remove = output<WorkPlan>();
   toggle = output<string>();
 
+  private readonly auth = inject(AuthService);
+
   readonly fiscalRange = fiscalYearRangeLabel;
   readonly yearSpan = (p: WorkPlan) => fiscalYearSpanLabel(p.startDate, p.endDate);
   readonly progress = todoProgress;
   readonly formatDate = formatDateShort;
   readonly formatMonth = formatMonthYearShort;
+
+  /** Deleting, like editing in full, is for the project's owner and Admin. */
+  canDelete(plan: WorkPlan): boolean {
+    return canEditPlan(this.auth.user(), plan);
+  }
+
+  /** The account responsible for the project may set its status (the form then shows only that). */
+  canSetStatus(plan: WorkPlan): boolean {
+    return canSetPlanStatus(this.auth.user(), plan);
+  }
+
+  editLabel(plan: WorkPlan): string {
+    return canEditPlan(this.auth.user(), plan) ? 'แก้ไข' : 'เปลี่ยนสถานะ';
+  }
 
   isExpanded(id: string): boolean {
     return this.expandedIds().has(id);

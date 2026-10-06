@@ -1,77 +1,97 @@
 import { TestBed } from '@angular/core/testing';
-import { AUTH_ACCOUNT, AuthAccount, BYPASS_LOGIN } from './auth.config';
-import { AuthService, credentialHash, safeReturnUrl } from './auth.service';
+import { freshTestBed } from './auth.testing';
+import { AuthService, homeUrlFor, safeReturnUrl } from './auth.service';
+import { UserStore } from './user-store.service';
 
-// sha256('tester:secret-1')
-const account: AuthAccount = {
-  username: 'tester',
-  passwordHash: 'ddaa5a25cc7b40629292288af343302f6818618eef73a80d14f9c9adf9f8ed06',
-  displayName: 'ผู้ทดสอบ',
-};
+const admin = { id: 'u-admin', role: 'ADMIN' as const };
 
-function create(bypass = false): AuthService {
+/** An AuthService that reads the stored session again, as a reload of the page would. */
+function reloaded(): AuthService {
   TestBed.resetTestingModule();
-  TestBed.configureTestingModule({
-    providers: [
-      { provide: AUTH_ACCOUNT, useValue: account },
-      { provide: BYPASS_LOGIN, useValue: bypass },
-    ],
-  });
   return TestBed.inject(AuthService);
 }
 
 describe('AuthService', () => {
+  let auth: AuthService;
+
   beforeEach(() => {
     localStorage.clear();
-    sessionStorage.clear();
+    freshTestBed(null);
+    auth = TestBed.inject(AuthService);
   });
 
-  it('hashes username:password as hex SHA-256', async () => {
-    expect(await credentialHash('tester', 'secret-1')).toBe(account.passwordHash);
-  });
-
-  it('refuses a wrong username or password', async () => {
-    const auth = create();
-    expect(await auth.login('someone', 'secret-1', false)).toBe(false);
-    expect(await auth.login('tester', 'wrong', false)).toBe(false);
+  it('refuses a wrong username or password with the reason', async () => {
+    const result = await auth.login('user1', 'wrong', false);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error.code).toBe('INVALID');
     expect(auth.isLoggedIn()).toBe(false);
   });
 
   it('signs in for this tab only, ignoring the case of the username', async () => {
-    const auth = create();
-    expect(await auth.login('  Tester ', 'secret-1', false)).toBe(true);
-    expect(auth.user()).toMatchObject({ username: 'tester', displayName: 'ผู้ทดสอบ', expiresAt: null });
-    expect(sessionStorage.length).toBe(1);
-    expect(localStorage.length).toBe(0);
-    expect(create().isLoggedIn()).toBe(true);
+    const result = await auth.login('  User1 ', 'user1234', false);
+    expect(result.ok).toBe(true);
+    expect(auth.user()).toMatchObject({ id: 'u-user1', username: 'user1', role: 'USER' });
+    expect(JSON.parse(sessionStorage.getItem('awp.session')!)).toMatchObject({ userId: 'u-user1', expiresAt: null });
+    expect(localStorage.getItem('awp.session')).toBeNull();
   });
 
   it('remembers a session on this browser until it expires', async () => {
-    const auth = create();
-    await auth.login('tester', 'secret-1', true);
-    expect(localStorage.length).toBe(1);
-    expect(create().isLoggedIn()).toBe(true);
+    await auth.login('user1', 'user1234', true);
+    sessionStorage.clear();
+    expect(reloaded().user()?.id).toBe('u-user1');
 
-    const key = localStorage.key(0)!;
-    localStorage.setItem(key, JSON.stringify({ ...JSON.parse(localStorage.getItem(key)!), expiresAt: Date.now() - 1 }));
-    expect(create().isLoggedIn()).toBe(false);
-    expect(localStorage.length).toBe(0);
+    const session = JSON.parse(localStorage.getItem('awp.session')!);
+    localStorage.setItem('awp.session', JSON.stringify({ ...session, expiresAt: Date.now() - 1 }));
+    expect(reloaded().isLoggedIn()).toBe(false);
+    expect(localStorage.getItem('awp.session')).toBeNull();
   });
 
   it('signs out everywhere', async () => {
-    const auth = create();
-    await auth.login('tester', 'secret-1', true);
+    await auth.login('user1', 'user1234', true);
     auth.logout();
     expect(auth.isLoggedIn()).toBe(false);
-    expect(create().isLoggedIn()).toBe(false);
+    expect(reloaded().isLoggedIn()).toBe(false);
   });
 
-  it('signs in without the login page in the develop environment', () => {
-    const auth = create(true);
-    expect(auth.user()).toMatchObject({ username: 'tester', displayName: 'ผู้ทดสอบ (develop)', expiresAt: null });
-    expect(sessionStorage.length + localStorage.length).toBe(0);
+  it('drops the session at once when the account is deactivated or its password reset', async () => {
+    const store = TestBed.inject(UserStore);
+    await auth.login('user1', 'user1234', true);
+    await store.update(admin, 'u-user1', { active: false });
+    expect(auth.user()).toBeNull();
+
+    await store.update(admin, 'u-user1', { active: true });
+    expect(auth.user()).toBeNull();
+    await auth.login('user1', 'user1234', false);
+    expect(auth.user()?.id).toBe('u-user1');
+    await store.resetPassword(admin, 'u-user1');
+    expect(auth.user()).toBeNull();
+  });
+
+  it('follows a rename or role change of the signed-in account', async () => {
+    await auth.login('user1', 'user1234', false);
+    await TestBed.inject(UserStore).update({ id: 'u-superadmin', role: 'SUPER_ADMIN' }, 'u-user1', { displayName: 'ชื่อใหม่', role: 'ADMIN' });
+    expect(auth.user()).toMatchObject({ displayName: 'ชื่อใหม่', role: 'ADMIN' });
+    expect(auth.hasRole('ADMIN', 'SUPER_ADMIN')).toBe(true);
+    expect(auth.hasRole('USER')).toBe(false);
+  });
+
+  it('ignores a session saved by the single-account version', () => {
+    sessionStorage.setItem('awp.session', JSON.stringify({ username: 'admin', displayName: 'ผู้ดูแลระบบ', expiresAt: null }));
+    expect(reloaded().isLoggedIn()).toBe(false);
+  });
+
+  it('changes the signed-in account’s password', async () => {
+    await auth.login('user1', 'user1234', false);
+    await auth.changePassword('user1234', 'new-password-1');
     auth.logout();
-    expect(auth.isLoggedIn()).toBe(false);
+    expect((await auth.login('user1', 'new-password-1', false)).ok).toBe(true);
+  });
+
+  it('sends Super Admin to user management and everyone else to the dashboard', () => {
+    expect(homeUrlFor({ role: 'SUPER_ADMIN' })).toBe('/users');
+    expect(homeUrlFor({ role: 'ADMIN' })).toBe('/dashboard');
+    expect(homeUrlFor({ role: 'USER' })).toBe('/dashboard');
+    expect(homeUrlFor(null)).toBe('/excel');
   });
 
   it('keeps the return address inside the app', () => {
@@ -80,5 +100,6 @@ describe('AuthService', () => {
     expect(safeReturnUrl('//evil.example')).toBe('/dashboard');
     expect(safeReturnUrl('/login')).toBe('/dashboard');
     expect(safeReturnUrl(null)).toBe('/dashboard');
+    expect(safeReturnUrl(null, '/users')).toBe('/users');
   });
 });

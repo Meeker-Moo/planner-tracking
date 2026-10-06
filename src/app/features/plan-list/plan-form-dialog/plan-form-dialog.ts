@@ -1,25 +1,30 @@
-import { ChangeDetectionStrategy, Component, computed, effect, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { WorkPlan, WorkPlanInput, WorkStatus } from '../../../core/models/work-plan.model';
 import { STATUS_LIST, WORK_TYPES } from '../../../core/models/status.constant';
 import { ThaiMonthPicker } from '../../../shared/components/thai-month-picker/thai-month-picker';
+import { ResponsiblePicker, resolveResponsible, responsibleValue } from '../../../shared/components/responsible-picker/responsible-picker';
+import { AuthService } from '../../../core/auth/auth.service';
+import { canEditPlan, canUseProjects } from '../../../core/auth/permissions';
+import { UserStore } from '../../../core/auth/user-store.service';
 import { fiscalYearOf, fiscalYearRangeLabel, monthEndIso, monthStartIso, todayIso } from '../../../shared/utils/date.util';
 
 /**
  * Add or edit a project. Its activities are managed on the project's detail page, so saving here
  * never touches them (the emitted value has no `activities`, and the service keeps the existing ones).
+ * Someone who may only set the project's status (the account responsible for it) gets just the status.
  */
 @Component({
   selector: 'app-plan-form-dialog',
   standalone: true,
-  imports: [FormsModule, ThaiMonthPicker],
+  imports: [FormsModule, ThaiMonthPicker, ResponsiblePicker],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (open()) {
       <div class="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
         <div class="w-full max-w-3xl max-h-[90vh] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden">
           <div class="px-6 py-5 border-b border-slate-200 flex items-center justify-between shrink-0">
-            <span class="text-lg font-bold text-slate-900">{{ editing() ? 'แก้ไขโครงการ' : 'เพิ่มโครงการใหม่' }}</span>
+            <span class="text-lg font-bold text-slate-900">{{ statusOnly() ? 'เปลี่ยนสถานะโครงการ' : editing() ? 'แก้ไขโครงการ' : 'เพิ่มโครงการใหม่' }}</span>
             <button
               type="button"
               aria-label="ปิด"
@@ -31,62 +36,73 @@ import { fiscalYearOf, fiscalYearRangeLabel, monthEndIso, monthStartIso, todayIs
           </div>
 
           <div class="p-6 flex flex-col gap-4 overflow-y-auto">
-            <label class="flex flex-col gap-1.5">
-              <span class="text-sm font-semibold text-slate-700">ชื่อโครงการ</span>
-              <input
-                type="text"
-                required
-                placeholder="เช่น จัดทำแผนปฏิบัติการประจำปี"
-                class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500"
-                [(ngModel)]="name"
-              />
-            </label>
-
-            <div class="flex gap-4">
-              <label class="flex flex-col gap-1.5 flex-1">
-                <span class="text-sm font-semibold text-slate-700">ประเภทโครงการ</span>
-                <select class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500" [(ngModel)]="type">
-                  @for (t of workTypes; track t) {
-                    <option [value]="t">{{ t }}</option>
-                  }
-                </select>
-              </label>
-              <label class="flex flex-col gap-1.5 flex-1">
-                <span class="text-sm font-semibold text-slate-700">ผู้รับผิดชอบ</span>
+            @if (statusOnly()) {
+              <div class="flex flex-col gap-1">
+                <span class="text-sm font-semibold text-slate-700">ชื่อโครงการ</span>
+                <span class="text-base font-bold text-slate-900">{{ name() }}</span>
+              </div>
+              <p class="text-xs text-blue-800 bg-blue-50 ring-1 ring-blue-200 rounded-xl px-3 py-2">
+                คุณเป็นผู้รับผิดชอบโครงการนี้ จึงเปลี่ยนสถานะได้ และเพิ่ม/แก้ไขกิจกรรมได้ที่หน้ารายละเอียดโครงการ ส่วนรายละเอียดโครงการแก้ได้โดยผู้สร้างโครงการหรือ Admin
+              </p>
+            } @else {
+              <label class="flex flex-col gap-1.5">
+                <span class="text-sm font-semibold text-slate-700">ชื่อโครงการ</span>
                 <input
                   type="text"
-                  placeholder="เช่น ฝ่ายยุทธศาสตร์"
+                  required
+                  placeholder="เช่น จัดทำแผนปฏิบัติการประจำปี"
                   class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500"
-                  [(ngModel)]="responsible"
+                  [(ngModel)]="name"
                 />
               </label>
-            </div>
 
-            <div class="flex flex-col gap-1.5">
               <div class="flex gap-4">
+                <label class="flex flex-col gap-1.5 flex-1">
+                  <span class="text-sm font-semibold text-slate-700">ประเภทโครงการ</span>
+                  <select class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500" [(ngModel)]="type">
+                    @for (t of workTypes; track t) {
+                      <option [value]="t">{{ t }}</option>
+                    }
+                  </select>
+                </label>
                 <div class="flex flex-col gap-1.5 flex-1">
-                  <span class="text-sm font-semibold text-slate-700">เดือน/ปีที่เริ่ม</span>
-                  <app-thai-month-picker
-                    ariaLabel="เดือนและปีที่เริ่มโครงการ"
-                    edge="start"
-                    [value]="startDate()"
-                    (valueChange)="onStartChange($event)"
-                  />
-                </div>
-                <div class="flex flex-col gap-1.5 flex-1">
-                  <span class="text-sm font-semibold text-slate-700">เดือน/ปีที่สิ้นสุด</span>
-                  <app-thai-month-picker
-                    ariaLabel="เดือนและปีที่สิ้นสุดโครงการ"
-                    edge="end"
-                    [value]="endDate()"
-                    (valueChange)="onEndChange($event)"
+                  <span class="text-sm font-semibold text-slate-700">ผู้รับผิดชอบ</span>
+                  <app-responsible-picker
+                    ariaLabel="ผู้รับผิดชอบโครงการ"
+                    [value]="responsible()"
+                    [legacyName]="editing()?.responsibleId ? '' : (editing()?.responsible ?? '')"
+                    (valueChange)="responsible.set($event)"
                   />
                 </div>
               </div>
-              @if (fiscalYear(); as fy) {
-                <span class="text-xs text-slate-500">อยู่ในปีงบประมาณ {{ fy }} ({{ fiscalRange(fy) }})</span>
-              }
-            </div>
+
+              <div class="flex flex-col gap-1.5">
+                <div class="flex gap-4">
+                  <div class="flex flex-col gap-1.5 flex-1">
+                    <span class="text-sm font-semibold text-slate-700">เดือน/ปีที่เริ่ม</span>
+                    <app-thai-month-picker
+                      ariaLabel="เดือนและปีที่เริ่มโครงการ"
+                      edge="start"
+                      [value]="startDate()"
+                      (valueChange)="onStartChange($event)"
+                    />
+                  </div>
+                  <div class="flex flex-col gap-1.5 flex-1">
+                    <span class="text-sm font-semibold text-slate-700">เดือน/ปีที่สิ้นสุด</span>
+                    <app-thai-month-picker
+                      ariaLabel="เดือนและปีที่สิ้นสุดโครงการ"
+                      edge="end"
+                      [value]="endDate()"
+                      (valueChange)="onEndChange($event)"
+                    />
+                  </div>
+                </div>
+                @if (fiscalYear(); as fy) {
+                  <span class="text-xs text-slate-500">อยู่ในปีงบประมาณ {{ fy }} ({{ fiscalRange(fy) }})</span>
+                }
+              </div>
+
+            }
 
             <div class="flex flex-col gap-1.5">
               <span class="text-sm font-semibold text-slate-700">สถานะ</span>
@@ -106,15 +122,17 @@ import { fiscalYearOf, fiscalYearRangeLabel, monthEndIso, monthStartIso, todayIs
               </div>
             </div>
 
-            <label class="flex flex-col gap-1.5">
-              <span class="text-sm font-semibold text-slate-700">รายละเอียด</span>
-              <textarea
-                rows="3"
-                placeholder="รายละเอียดเพิ่มเติม (ถ้ามี)"
-                class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none resize-none focus:border-blue-500"
-                [(ngModel)]="description"
-              ></textarea>
-            </label>
+            @if (!statusOnly()) {
+              <label class="flex flex-col gap-1.5">
+                <span class="text-sm font-semibold text-slate-700">รายละเอียด</span>
+                <textarea
+                  rows="3"
+                  placeholder="รายละเอียดเพิ่มเติม (ถ้ามี)"
+                  class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none resize-none focus:border-blue-500"
+                  [(ngModel)]="description"
+                ></textarea>
+              </label>
+            }
           </div>
 
           <div class="px-6 py-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
@@ -131,7 +149,7 @@ import { fiscalYearOf, fiscalYearRangeLabel, monthEndIso, monthStartIso, todayIs
               [disabled]="!name() || !startDate() || !endDate()"
               (click)="onSave()"
             >
-              บันทึกโครงการ
+              {{ statusOnly() ? 'บันทึกสถานะ' : 'บันทึกโครงการ' }}
             </button>
           </div>
         </div>
@@ -152,11 +170,20 @@ export class PlanFormDialog {
 
   name = signal('');
   type = signal(WORK_TYPES[0]);
+  /** The picker's value: an account id, '' for nobody, or the old typed-in name (see ResponsiblePicker). */
   responsible = signal('');
   startDate = signal(monthStartIso(todayIso()));
   endDate = signal(monthEndIso(todayIso()));
   status = signal<WorkStatus>('planned');
   description = signal('');
+
+  private readonly auth = inject(AuthService);
+  private readonly users = inject(UserStore);
+  /** Editing a project the account may not edit in full: it is responsible for it, so here it sets the status only. */
+  statusOnly = computed(() => {
+    const p = this.editing();
+    return !!p && !canEditPlan(this.auth.user(), p);
+  });
 
   fiscalYear = computed(() => fiscalYearOf(this.startDate()));
 
@@ -167,7 +194,7 @@ export class PlanFormDialog {
       if (p) {
         this.name.set(p.name);
         this.type.set(p.type);
-        this.responsible.set(p.responsible);
+        this.responsible.set(responsibleValue(p));
         this.startDate.set(p.startDate);
         this.endDate.set(p.endDate);
         this.status.set(p.status);
@@ -175,7 +202,9 @@ export class PlanFormDialog {
       } else {
         this.name.set('');
         this.type.set(WORK_TYPES[0]);
-        this.responsible.set('');
+        // A new project starts out as the creator's own responsibility.
+        const me = this.auth.user();
+        this.responsible.set(canUseProjects(me) ? me.id : '');
         this.startDate.set(monthStartIso(todayIso()));
         this.endDate.set(monthEndIso(todayIso()));
         this.status.set('planned');
@@ -206,7 +235,7 @@ export class PlanFormDialog {
       year,
       name: this.name(),
       type: this.type(),
-      responsible: this.responsible(),
+      ...resolveResponsible(this.responsible(), this.editing()?.responsible ?? '', (id) => this.users.getById(id)?.displayName),
       startDate,
       endDate,
       status: this.status(),

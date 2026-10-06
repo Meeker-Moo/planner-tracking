@@ -1,17 +1,25 @@
-import { ChangeDetectionStrategy, Component, computed, effect, ElementRef, input, output, signal, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, ElementRef, inject, input, output, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Activity, TodoItem, WorkStatus } from '../../../core/models/work-plan.model';
 import { STATUS_LIST, STATUS_MAP } from '../../../core/models/status.constant';
 import { ThaiDatePicker } from '../../../shared/components/thai-date-picker/thai-date-picker';
+import { ResponsiblePicker, resolveResponsible, responsibleValue } from '../../../shared/components/responsible-picker/responsible-picker';
+import { UserStore } from '../../../core/auth/user-store.service';
+import { AuthService } from '../../../core/auth/auth.service';
+import { canUseProjects } from '../../../core/auth/permissions';
 import { formatDateShort } from '../../../shared/utils/date.util';
 import { uid } from '../../../shared/utils/id.util';
 import { daysBetween, quarterOf } from '../project-detail.util';
 
-/** Add or edit one activity of a project, including its to-do list. A bottom sheet on phones, a centred dialog otherwise. */
+/**
+ * Add or edit one activity of a project, including its to-do list. A bottom sheet on phones, a centred dialog otherwise.
+ * With `statusOnly` (the account is responsible for the activity but may not edit the project) only the status,
+ * the note and the ticks of the to-dos can be changed.
+ */
 @Component({
   selector: 'app-activity-form-dialog',
   standalone: true,
-  imports: [FormsModule, ThaiDatePicker],
+  imports: [FormsModule, ThaiDatePicker, ResponsiblePicker],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (open()) {
@@ -36,7 +44,9 @@ import { daysBetween, quarterOf } from '../project-detail.util';
               </svg>
             </span>
             <div class="min-w-0 grow">
-              <h2 id="activity-form-title" class="text-lg font-bold text-slate-900">{{ editing() ? 'แก้ไขกิจกรรม' : 'เพิ่มกิจกรรมใหม่' }}</h2>
+              <h2 id="activity-form-title" class="text-lg font-bold text-slate-900">
+                {{ statusOnly() ? 'เปลี่ยนสถานะกิจกรรม' : editing() ? 'แก้ไขกิจกรรม' : 'เพิ่มกิจกรรมใหม่' }}
+              </h2>
               @if (projectName()) {
                 <p class="text-xs text-slate-500 truncate">โครงการ: {{ projectName() }}</p>
               }
@@ -54,64 +64,74 @@ import { daysBetween, quarterOf } from '../project-detail.util';
           </div>
 
           <div class="px-5 sm:px-6 py-5 flex flex-col gap-6 overflow-y-auto">
-            <!-- What -->
-            <div class="flex flex-col gap-4">
-              <label class="flex flex-col gap-1.5">
-                <span class="text-sm font-semibold text-slate-700">ชื่อกิจกรรม <span class="text-red-500">*</span></span>
-                <input
-                  #nameInput
-                  type="text"
-                  required
-                  placeholder="เช่น อบรมรุ่นที่ 1"
-                  class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
-                  [(ngModel)]="name"
-                />
-              </label>
-              <label class="flex flex-col gap-1.5">
-                <span class="text-sm font-semibold text-slate-700">ผู้รับผิดชอบ</span>
-                <input
-                  type="text"
-                  placeholder="เช่น นายสมชาย หรือ ฝ่ายแผนงาน"
-                  class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
-                  [(ngModel)]="responsible"
-                />
-              </label>
-            </div>
-
-            <!-- When -->
-            <div class="flex flex-col gap-2">
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            @if (statusOnly()) {
+              <div class="flex flex-col gap-2">
+                <span class="text-base font-bold text-slate-900">{{ name() }}</span>
+                <span class="text-sm text-slate-600">{{ formatDate(startDate()) }} – {{ formatDate(endDate()) }}</span>
+                <p class="text-xs text-blue-800 bg-blue-50 ring-1 ring-blue-200 rounded-xl px-3 py-2">
+                  คุณเป็นผู้รับผิดชอบกิจกรรมนี้ จึงเปลี่ยนได้เฉพาะสถานะ หมายเหตุ และติ๊ก to do ส่วนรายละเอียดอื่นแก้ได้โดยผู้สร้างโครงการหรือ Admin
+                </p>
+              </div>
+            } @else {
+              <!-- What -->
+              <div class="flex flex-col gap-4">
+                <label class="flex flex-col gap-1.5">
+                  <span class="text-sm font-semibold text-slate-700">ชื่อกิจกรรม <span class="text-red-500">*</span></span>
+                  <input
+                    #nameInput
+                    type="text"
+                    required
+                    placeholder="เช่น อบรมรุ่นที่ 1"
+                    class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+                    [(ngModel)]="name"
+                  />
+                </label>
                 <div class="flex flex-col gap-1.5">
-                  <span class="text-sm font-semibold text-slate-700">วันที่เริ่ม <span class="text-red-500">*</span></span>
-                  <app-thai-date-picker ariaLabel="วันที่เริ่มกิจกรรม" [value]="startDate()" (valueChange)="onStartChange($event)" />
-                </div>
-                <div class="flex flex-col gap-1.5">
-                  <span class="text-sm font-semibold text-slate-700">วันที่สิ้นสุด <span class="text-red-500">*</span></span>
-                  <app-thai-date-picker ariaLabel="วันที่สิ้นสุดกิจกรรม" [value]="endDate()" (valueChange)="onEndChange($event)" />
+                  <span class="text-sm font-semibold text-slate-700">ผู้รับผิดชอบ</span>
+                  <app-responsible-picker
+                    ariaLabel="ผู้รับผิดชอบกิจกรรม"
+                    [value]="responsible()"
+                    [legacyName]="editing()?.responsibleId ? '' : (editing()?.responsible ?? '')"
+                    (valueChange)="responsible.set($event)"
+                  />
                 </div>
               </div>
-              @if (duration(); as d) {
-                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                  <span class="inline-flex items-center gap-1.5 rounded-md bg-slate-100 text-slate-600 font-medium px-2 py-1">
-                    <svg viewBox="0 0 20 20" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                      <circle cx="10" cy="10" r="7" /><path d="M10 6.5V10l2.5 1.5" stroke-linecap="round" stroke-linejoin="round" />
-                    </svg>
-                    รวม {{ d }} วัน
-                  </span>
-                  @if (quarterText()) {
-                    <span class="inline-flex items-center rounded-md bg-blue-50 text-blue-700 font-medium px-2 py-1">{{ quarterText() }}</span>
-                  }
-                  @if (outsideProject()) {
-                    <span class="inline-flex items-center gap-1.5 text-amber-700">
-                      <svg viewBox="0 0 20 20" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                        <path d="M10 3.5l7 12.5H3L10 3.5z" stroke-linejoin="round" /><path d="M10 8.5v3M10 14h.01" stroke-linecap="round" />
-                      </svg>
-                      อยู่นอกช่วงของโครงการ ({{ formatDate(defaultStart()) }} – {{ formatDate(defaultEnd()) }})
-                    </span>
-                  }
+
+              <!-- When -->
+              <div class="flex flex-col gap-2">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div class="flex flex-col gap-1.5">
+                    <span class="text-sm font-semibold text-slate-700">วันที่เริ่ม <span class="text-red-500">*</span></span>
+                    <app-thai-date-picker ariaLabel="วันที่เริ่มกิจกรรม" [value]="startDate()" (valueChange)="onStartChange($event)" />
+                  </div>
+                  <div class="flex flex-col gap-1.5">
+                    <span class="text-sm font-semibold text-slate-700">วันที่สิ้นสุด <span class="text-red-500">*</span></span>
+                    <app-thai-date-picker ariaLabel="วันที่สิ้นสุดกิจกรรม" [value]="endDate()" (valueChange)="onEndChange($event)" />
+                  </div>
                 </div>
-              }
-            </div>
+                @if (duration(); as d) {
+                  <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                    <span class="inline-flex items-center gap-1.5 rounded-md bg-slate-100 text-slate-600 font-medium px-2 py-1">
+                      <svg viewBox="0 0 20 20" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                        <circle cx="10" cy="10" r="7" /><path d="M10 6.5V10l2.5 1.5" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                      รวม {{ d }} วัน
+                    </span>
+                    @if (quarterText()) {
+                      <span class="inline-flex items-center rounded-md bg-blue-50 text-blue-700 font-medium px-2 py-1">{{ quarterText() }}</span>
+                    }
+                    @if (outsideProject()) {
+                      <span class="inline-flex items-center gap-1.5 text-amber-700">
+                        <svg viewBox="0 0 20 20" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                          <path d="M10 3.5l7 12.5H3L10 3.5z" stroke-linejoin="round" /><path d="M10 8.5v3M10 14h.01" stroke-linecap="round" />
+                        </svg>
+                        อยู่นอกช่วงของโครงการ ({{ formatDate(defaultStart()) }} – {{ formatDate(defaultEnd()) }})
+                      </span>
+                    }
+                  </div>
+                }
+              </div>
+            }
 
             <!-- Status -->
             <div class="flex flex-col gap-2">
@@ -154,15 +174,17 @@ import { daysBetween, quarterOf } from '../project-detail.util';
               }
             </div>
 
-            <label class="flex flex-col gap-1.5">
-              <span class="text-sm font-semibold text-slate-700">รายละเอียด</span>
-              <textarea
-                rows="3"
-                placeholder="รายละเอียดของกิจกรรม (ถ้ามี)"
-                class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none resize-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
-                [(ngModel)]="description"
-              ></textarea>
-            </label>
+            @if (!statusOnly()) {
+              <label class="flex flex-col gap-1.5">
+                <span class="text-sm font-semibold text-slate-700">รายละเอียด</span>
+                <textarea
+                  rows="3"
+                  placeholder="รายละเอียดของกิจกรรม (ถ้ามี)"
+                  class="border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none resize-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+                  [(ngModel)]="description"
+                ></textarea>
+              </label>
+            }
 
             <!-- To-do list -->
             <div class="flex flex-col gap-2 rounded-xl bg-slate-50 ring-1 ring-slate-200 p-3.5">
@@ -185,53 +207,67 @@ import { daysBetween, quarterOf } from '../project-detail.util';
                     [checked]="t.done"
                     (change)="patchTodo(t.id, { done: $any($event.target).checked })"
                   />
+                  @if (statusOnly()) {
+                    <span class="flex-1 min-w-0 text-sm" [class]="t.done ? 'line-through text-slate-400' : 'text-slate-800'">{{ t.text }}</span>
+                  } @else {
+                    <input
+                      type="text"
+                      aria-label="รายการ to do"
+                      class="flex-1 min-w-0 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+                      [class.line-through]="t.done"
+                      [class.text-slate-400]="t.done"
+                      [ngModel]="t.text"
+                      (ngModelChange)="patchTodo(t.id, { text: $event })"
+                    />
+                    <button
+                      type="button"
+                      [attr.aria-label]="'ลบ ' + t.text"
+                      title="ลบรายการนี้"
+                      class="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-600 outline-none focus-visible:ring-2 focus-visible:ring-red-500/60"
+                      (click)="removeTodo(t.id)"
+                    >
+                      <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                        <path d="M4 6h12M8 6V4.5h4V6M6 6l.7 10h6.6L14 6" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                    </button>
+                  }
+                </div>
+              } @empty {
+                @if (statusOnly()) {
+                  <p class="text-xs text-slate-500">ไม่มีรายการ to do</p>
+                }
+              }
+
+              @if (!statusOnly()) {
+                <div class="flex gap-2">
                   <input
                     type="text"
-                    aria-label="รายการ to do"
-                    class="flex-1 min-w-0 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
-                    [class.line-through]="t.done"
-                    [class.text-slate-400]="t.done"
-                    [ngModel]="t.text"
-                    (ngModelChange)="patchTodo(t.id, { text: $event })"
+                    placeholder="พิมพ์รายการ to do แล้วกด Enter"
+                    aria-label="เพิ่มรายการ to do"
+                    class="flex-1 min-w-0 bg-white border border-dashed border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 focus:border-solid"
+                    [ngModel]="newTodo()"
+                    (ngModelChange)="newTodo.set($event)"
+                    (keydown.enter)="addTodo(); $event.preventDefault()"
                   />
                   <button
                     type="button"
-                    [attr.aria-label]="'ลบ ' + t.text"
-                    title="ลบรายการนี้"
-                    class="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-600 outline-none focus-visible:ring-2 focus-visible:ring-red-500/60"
-                    (click)="removeTodo(t.id)"
+                    class="px-3 py-2 rounded-lg bg-white border border-slate-200 text-sm font-semibold text-blue-600 hover:bg-blue-50 disabled:opacity-40 disabled:hover:bg-white"
+                    [disabled]="!newTodo().trim()"
+                    (click)="addTodo()"
                   >
-                    <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                      <path d="M4 6h12M8 6V4.5h4V6M6 6l.7 10h6.6L14 6" stroke-linecap="round" stroke-linejoin="round" />
-                    </svg>
+                    + เพิ่ม
                   </button>
                 </div>
               }
-
-              <div class="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="พิมพ์รายการ to do แล้วกด Enter"
-                  aria-label="เพิ่มรายการ to do"
-                  class="flex-1 min-w-0 bg-white border border-dashed border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 focus:border-solid"
-                  [ngModel]="newTodo()"
-                  (ngModelChange)="newTodo.set($event)"
-                  (keydown.enter)="addTodo(); $event.preventDefault()"
-                />
-                <button
-                  type="button"
-                  class="px-3 py-2 rounded-lg bg-white border border-slate-200 text-sm font-semibold text-blue-600 hover:bg-blue-50 disabled:opacity-40 disabled:hover:bg-white"
-                  [disabled]="!newTodo().trim()"
-                  (click)="addTodo()"
-                >
-                  + เพิ่ม
-                </button>
-              </div>
             </div>
           </div>
 
           <div class="px-5 sm:px-6 py-4 border-t border-slate-200 bg-slate-50/60 flex flex-col-reverse sm:flex-row sm:items-center gap-2 sm:gap-3 shrink-0">
-            <span class="hidden sm:block grow text-xs text-slate-400"><span class="text-red-500">*</span> จำเป็นต้องกรอก</span>
+            <span class="hidden sm:block grow text-xs text-slate-400">
+              @if (!statusOnly()) {
+                <span class="text-red-500">*</span> จำเป็นต้องกรอก
+              }
+            </span>
             <button
               type="button"
               class="px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50"
@@ -246,7 +282,7 @@ import { daysBetween, quarterOf } from '../project-detail.util';
               [title]="canSave() ? '' : 'กรุณาใส่ชื่อกิจกรรมและวันที่'"
               (click)="onSave()"
             >
-              {{ editing() ? 'บันทึกการแก้ไข' : 'เพิ่มกิจกรรม' }}
+              {{ statusOnly() ? 'บันทึกสถานะ' : editing() ? 'บันทึกการแก้ไข' : 'เพิ่มกิจกรรม' }}
             </button>
           </div>
         </div>
@@ -263,6 +299,8 @@ export class ActivityFormDialog {
   defaultEnd = input('');
   /** Shown under the title. */
   projectName = input('');
+  /** Only the status, the note and the to-do ticks may change (see WorkPlanService.saveActivity). */
+  statusOnly = input(false);
 
   save = output<Activity>();
   cancel = output<void>();
@@ -271,8 +309,12 @@ export class ActivityFormDialog {
   readonly formatDate = formatDateShort;
 
   name = signal('');
+  /** The picker's value: an account id, '' for nobody, or the old typed-in name (see ResponsiblePicker). */
   responsible = signal('');
   status = signal<WorkStatus>('planned');
+
+  private readonly users = inject(UserStore);
+  private readonly auth = inject(AuthService);
   description = signal('');
   startDate = signal('');
   endDate = signal('');
@@ -318,7 +360,7 @@ export class ActivityFormDialog {
   constructor() {
     // Start typing the name as soon as the dialog opens.
     effect(() => {
-      if (this.open()) this.nameInput()?.nativeElement.focus();
+      if (this.open() && !this.statusOnly()) this.nameInput()?.nativeElement.focus();
     });
     effect(() => {
       if (!this.open()) return;
@@ -327,7 +369,7 @@ export class ActivityFormDialog {
       this.noteOpen.set(false);
       if (a) {
         this.name.set(a.name);
-        this.responsible.set(a.responsible ?? '');
+        this.responsible.set(responsibleValue(a));
         this.status.set(a.status);
         this.description.set(a.description ?? '');
         this.startDate.set(a.startDate);
@@ -336,7 +378,9 @@ export class ActivityFormDialog {
         this.todos.set((a.todos ?? []).map((t) => ({ ...t })));
       } else {
         this.name.set('');
-        this.responsible.set('');
+        // A new activity starts out as the responsibility of whoever adds it.
+        const me = this.auth.user();
+        this.responsible.set(canUseProjects(me) ? me.id : '');
         this.status.set('planned');
         this.description.set('');
         this.startDate.set(this.defaultStart());
@@ -387,6 +431,16 @@ export class ActivityFormDialog {
     this.todos.update((list) => list.filter((t) => t.id !== id));
   }
 
+  /** The chosen responsible account and its name, the old name, or neither. */
+  private responsibleFields(): Pick<Activity, 'responsibleId' | 'responsible'> {
+    const { responsibleId, responsible } = resolveResponsible(
+      this.responsible(),
+      this.editing()?.responsible ?? '',
+      (id) => this.users.getById(id)?.displayName,
+    );
+    return { responsibleId, responsible: responsible.trim() || undefined };
+  }
+
   onSave(): void {
     const name = this.name().trim();
     if (!this.canSave()) return;
@@ -399,7 +453,7 @@ export class ActivityFormDialog {
     this.save.emit({
       id: this.editing()?.id ?? uid(),
       name,
-      responsible: clean(this.responsible()),
+      ...this.responsibleFields(),
       description: clean(this.description()),
       startDate: this.startDate(),
       endDate: this.endDate(),

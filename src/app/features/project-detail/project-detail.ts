@@ -4,6 +4,9 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { map } from 'rxjs';
 import { Toolbar } from '../../shared/components/toolbar/toolbar';
 import { StatusBadge } from '../../shared/components/status-badge/status-badge';
+import { OwnerTag } from '../../shared/components/owner-tag/owner-tag';
+import { AuthService } from '../../core/auth/auth.service';
+import { canEditPlan, canManageActivities, canSetActivityStatus, canSetPlanStatus } from '../../core/auth/permissions';
 import { ConfirmDialog } from '../../shared/components/confirm-dialog/confirm-dialog';
 import { PlanFormDialog } from '../plan-list/plan-form-dialog/plan-form-dialog';
 import { ActivityFormDialog } from './activity-form-dialog/activity-form-dialog';
@@ -41,7 +44,7 @@ const TONE_CLASS: Record<string, string> = {
 @Component({
   selector: 'app-project-detail',
   standalone: true,
-  imports: [RouterLink, Toolbar, StatusBadge, ConfirmDialog, PlanFormDialog, ActivityFormDialog],
+  imports: [RouterLink, Toolbar, StatusBadge, ConfirmDialog, PlanFormDialog, ActivityFormDialog, OwnerTag],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'grow flex flex-col min-h-0' },
   template: `
@@ -66,32 +69,37 @@ const TONE_CLASS: Record<string, string> = {
                   <div class="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                     <span class="rounded-md bg-slate-100 text-slate-600 font-medium px-2 py-0.5">{{ p.type || 'ไม่ระบุประเภท' }}</span>
                     <span>ปีงบประมาณ {{ yearSpan() }}</span>
+                    <app-owner-tag [item]="p" />
                   </div>
                   <h1 class="mt-1.5 text-xl md:text-2xl font-bold text-slate-900 wrap-break-word">{{ p.name }}</h1>
                 </div>
                 <app-status-badge [status]="p.status" />
                 <div class="flex items-center gap-1">
-                  <button
-                    type="button"
-                    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50 outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
-                    (click)="projectFormOpen.set(true)"
-                  >
-                    <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                      <path d="M13.5 3.5l3 3L7 16H4v-3l9.5-9.5z" stroke-linejoin="round" />
-                    </svg>
-                    แก้ไขโครงการ
-                  </button>
-                  <button
-                    type="button"
-                    class="w-9 h-9 inline-flex items-center justify-center rounded-xl text-red-600 hover:bg-red-50 outline-none focus-visible:ring-2 focus-visible:ring-red-500/60"
-                    title="ลบโครงการ"
-                    aria-label="ลบโครงการ"
-                    (click)="deleteProjectOpen.set(true)"
-                  >
-                    <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                      <path d="M4 6h12M8 6V4.5h4V6M6 6l.7 10h6.6L14 6" stroke-linecap="round" stroke-linejoin="round" />
-                    </svg>
-                  </button>
+                  @if (canSetProjectStatus()) {
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50 outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+                      (click)="projectFormOpen.set(true)"
+                    >
+                      <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                        <path d="M13.5 3.5l3 3L7 16H4v-3l9.5-9.5z" stroke-linejoin="round" />
+                      </svg>
+                      {{ canEdit() ? 'แก้ไขโครงการ' : 'เปลี่ยนสถานะ' }}
+                    </button>
+                  }
+                  @if (canEdit()) {
+                    <button
+                      type="button"
+                      class="w-9 h-9 inline-flex items-center justify-center rounded-xl text-red-600 hover:bg-red-50 outline-none focus-visible:ring-2 focus-visible:ring-red-500/60"
+                      title="ลบโครงการ"
+                      aria-label="ลบโครงการ"
+                      (click)="deleteProjectOpen.set(true)"
+                    >
+                      <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                        <path d="M4 6h12M8 6V4.5h4V6M6 6l.7 10h6.6L14 6" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                    </button>
+                  }
                 </div>
               </div>
 
@@ -292,16 +300,18 @@ const TONE_CLASS: Record<string, string> = {
               <h2 class="text-base font-bold text-slate-900">
                 กิจกรรมย่อย <span class="font-normal text-slate-400">({{ activities().length }})</span>
               </h2>
-              <button
-                type="button"
-                class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 text-sm font-bold text-white shadow-sm shadow-blue-600/30 hover:bg-blue-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 focus-visible:ring-offset-2"
-                (click)="openAddActivity()"
-              >
-                <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
-                  <path d="M10 4.5v11M4.5 10h11" stroke-linecap="round" />
-                </svg>
-                เพิ่มกิจกรรม
-              </button>
+              @if (canManage()) {
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 text-sm font-bold text-white shadow-sm shadow-blue-600/30 hover:bg-blue-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 focus-visible:ring-offset-2"
+                  (click)="openAddActivity()"
+                >
+                  <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+                    <path d="M10 4.5v11M4.5 10h11" stroke-linecap="round" />
+                  </svg>
+                  เพิ่มกิจกรรม
+                </button>
+              }
             </div>
 
             @if (activities().length > 0) {
@@ -404,28 +414,32 @@ const TONE_CLASS: Record<string, string> = {
                       </div>
                       <app-status-badge [status]="a.status" />
                       <div class="flex items-center gap-0.5 -mr-1.5">
-                        <button
-                          type="button"
-                          class="w-8 h-8 inline-flex items-center justify-center rounded-lg text-blue-600 hover:bg-blue-50 outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
-                          title="แก้ไขกิจกรรม"
-                          [attr.aria-label]="'แก้ไขกิจกรรม ' + a.name"
-                          (click)="openEditActivity(a)"
-                        >
-                          <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                            <path d="M13.5 3.5l3 3L7 16H4v-3l9.5-9.5z" stroke-linejoin="round" />
-                          </svg>
-                        </button>
-                        <button
-                          type="button"
-                          class="w-8 h-8 inline-flex items-center justify-center rounded-lg text-red-600 hover:bg-red-50 outline-none focus-visible:ring-2 focus-visible:ring-red-500/60"
-                          title="ลบกิจกรรม"
-                          [attr.aria-label]="'ลบกิจกรรม ' + a.name"
-                          (click)="deleteActivityTarget.set(a)"
-                        >
-                          <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                            <path d="M4 6h12M8 6V4.5h4V6M6 6l.7 10h6.6L14 6" stroke-linecap="round" stroke-linejoin="round" />
-                          </svg>
-                        </button>
+                        @if (canSetStatus(a)) {
+                          <button
+                            type="button"
+                            class="w-8 h-8 inline-flex items-center justify-center rounded-lg text-blue-600 hover:bg-blue-50 outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+                            [title]="canManage() ? 'แก้ไขกิจกรรม' : 'เปลี่ยนสถานะกิจกรรม'"
+                            [attr.aria-label]="(canManage() ? 'แก้ไขกิจกรรม ' : 'เปลี่ยนสถานะกิจกรรม ') + a.name"
+                            (click)="openEditActivity(a)"
+                          >
+                            <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                              <path d="M13.5 3.5l3 3L7 16H4v-3l9.5-9.5z" stroke-linejoin="round" />
+                            </svg>
+                          </button>
+                        }
+                        @if (canManage()) {
+                          <button
+                            type="button"
+                            class="w-8 h-8 inline-flex items-center justify-center rounded-lg text-red-600 hover:bg-red-50 outline-none focus-visible:ring-2 focus-visible:ring-red-500/60"
+                            title="ลบกิจกรรม"
+                            [attr.aria-label]="'ลบกิจกรรม ' + a.name"
+                            (click)="deleteActivityTarget.set(a)"
+                          >
+                            <svg viewBox="0 0 20 20" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                              <path d="M4 6h12M8 6V4.5h4V6M6 6l.7 10h6.6L14 6" stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                          </button>
+                        }
                       </div>
                     </div>
 
@@ -454,7 +468,7 @@ const TONE_CLASS: Record<string, string> = {
                         @for (t of visibleTodos(a); track t.id) {
                           <li class="group flex items-start gap-1 rounded-lg -mx-1.5 px-1.5 py-1 hover:bg-slate-50">
                             @if (isEditing(a, t)) {
-                              <input type="checkbox" class="mt-1.5 w-4 h-4 shrink-0 accent-emerald-600" [checked]="t.done" (change)="toggleTodo(a, t.id)" [attr.aria-label]="t.text" />
+                              <input type="checkbox" class="mt-1.5 w-4 h-4 shrink-0 accent-emerald-600" [checked]="t.done" [disabled]="!canSetStatus(a)" (change)="toggleTodo(a, t.id)" [attr.aria-label]="t.text" />
                               <input
                                 #todoEdit
                                 type="text"
@@ -466,34 +480,36 @@ const TONE_CLASS: Record<string, string> = {
                                 (blur)="saveTodo(a, t.id, $any($event.target).value)"
                               />
                             } @else {
-                              <label class="grow min-w-0 flex items-start gap-2 text-sm cursor-pointer">
-                                <input type="checkbox" class="mt-0.5 w-4 h-4 shrink-0 accent-emerald-600" [checked]="t.done" (change)="toggleTodo(a, t.id)" />
+                              <label class="grow min-w-0 flex items-start gap-2 text-sm" [class.cursor-pointer]="canSetStatus(a)">
+                                <input type="checkbox" class="mt-0.5 w-4 h-4 shrink-0 accent-emerald-600 disabled:opacity-60" [checked]="t.done" [disabled]="!canSetStatus(a)" (change)="toggleTodo(a, t.id)" />
                                 <span class="wrap-break-word" [class]="t.done ? 'text-slate-400 line-through' : 'text-slate-800'">{{ t.text }}</span>
                               </label>
-                              <div class="flex items-center gap-0.5 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
-                                <button
-                                  type="button"
-                                  class="w-6 h-6 inline-flex items-center justify-center rounded-md text-slate-400 hover:bg-white hover:text-blue-600 outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
-                                  [attr.aria-label]="'แก้ไข ' + t.text"
-                                  title="แก้ไข"
-                                  (click)="editingTodo.set({ activityId: a.id, todoId: t.id })"
-                                >
-                                  <svg viewBox="0 0 20 20" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                                    <path d="M13.5 3.5l3 3L7 16H4v-3l9.5-9.5z" stroke-linejoin="round" />
-                                  </svg>
-                                </button>
-                                <button
-                                  type="button"
-                                  class="w-6 h-6 inline-flex items-center justify-center rounded-md text-slate-400 hover:bg-white hover:text-red-600 outline-none focus-visible:ring-2 focus-visible:ring-red-500/60"
-                                  [attr.aria-label]="'ลบ ' + t.text"
-                                  title="ลบ"
-                                  (click)="deleteTodo(a, t.id)"
-                                >
-                                  <svg viewBox="0 0 20 20" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                                    <path d="M6 6l8 8M14 6l-8 8" stroke-linecap="round" />
-                                  </svg>
-                                </button>
-                              </div>
+                              @if (canManage()) {
+                                <div class="flex items-center gap-0.5 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
+                                  <button
+                                    type="button"
+                                    class="w-6 h-6 inline-flex items-center justify-center rounded-md text-slate-400 hover:bg-white hover:text-blue-600 outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+                                    [attr.aria-label]="'แก้ไข ' + t.text"
+                                    title="แก้ไข"
+                                    (click)="editingTodo.set({ activityId: a.id, todoId: t.id })"
+                                  >
+                                    <svg viewBox="0 0 20 20" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                                      <path d="M13.5 3.5l3 3L7 16H4v-3l9.5-9.5z" stroke-linejoin="round" />
+                                    </svg>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    class="w-6 h-6 inline-flex items-center justify-center rounded-md text-slate-400 hover:bg-white hover:text-red-600 outline-none focus-visible:ring-2 focus-visible:ring-red-500/60"
+                                    [attr.aria-label]="'ลบ ' + t.text"
+                                    title="ลบ"
+                                    (click)="deleteTodo(a, t.id)"
+                                  >
+                                    <svg viewBox="0 0 20 20" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                      <path d="M6 6l8 8M14 6l-8 8" stroke-linecap="round" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              }
                             }
                           </li>
                         }
@@ -502,14 +518,16 @@ const TONE_CLASS: Record<string, string> = {
                         <p class="text-xs text-slate-400">ซ่อน {{ tp.done }} รายการที่เสร็จแล้ว</p>
                       }
 
-                      <input
-                        #quick
-                        type="text"
-                        placeholder="+ เพิ่มรายการ to do แล้วกด Enter"
-                        aria-label="เพิ่มรายการ to do"
-                        class="mt-1 w-full border border-dashed border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-blue-500 focus:border-solid"
-                        (keydown.enter)="addTodo(a, quick.value); quick.value = ''"
-                      />
+                      @if (canManage()) {
+                        <input
+                          #quick
+                          type="text"
+                          placeholder="+ เพิ่มรายการ to do แล้วกด Enter"
+                          aria-label="เพิ่มรายการ to do"
+                          class="mt-1 w-full border border-dashed border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-blue-500 focus:border-solid"
+                          (keydown.enter)="addTodo(a, quick.value); quick.value = ''"
+                        />
+                      }
                     </div>
                   </div>
                 </article>
@@ -531,13 +549,15 @@ const TONE_CLASS: Record<string, string> = {
                   </span>
                   <div class="font-semibold text-slate-700">ยังไม่มีกิจกรรมย่อย</div>
                   <p class="text-sm text-slate-500">แยกโครงการเป็นขั้นตอน เพื่อติดตามความคืบหน้าและดูตามไตรมาสได้</p>
-                  <button
-                    type="button"
-                    class="mt-1 px-4 py-2 rounded-xl bg-blue-600 text-sm font-bold text-white shadow-sm shadow-blue-600/30 hover:bg-blue-700"
-                    (click)="openAddActivity()"
-                  >
-                    + เพิ่มกิจกรรมแรก
-                  </button>
+                  @if (canManage()) {
+                    <button
+                      type="button"
+                      class="mt-1 px-4 py-2 rounded-xl bg-blue-600 text-sm font-bold text-white shadow-sm shadow-blue-600/30 hover:bg-blue-700"
+                      (click)="openAddActivity()"
+                    >
+                      + เพิ่มกิจกรรมแรก
+                    </button>
+                  }
                 </div>
               }
             }
@@ -565,6 +585,7 @@ const TONE_CLASS: Record<string, string> = {
       [defaultStart]="plan()?.startDate ?? ''"
       [defaultEnd]="plan()?.endDate ?? ''"
       [projectName]="plan()?.name ?? ''"
+      [statusOnly]="!canManage()"
       (save)="onSaveActivity($event)"
       (cancel)="closeActivityForm()"
     />
@@ -609,7 +630,33 @@ export class ProjectDetail {
   readonly formatMonthShort = formatMonthYearShort;
   readonly progress = todoProgress;
 
-  plan = computed(() => this.workPlanService.plans().find((p) => p.id === this.id()));
+  private readonly auth = inject(AuthService);
+
+  // Not narrowed by Admin's person filter: a project opened from a link stays open.
+  plan = computed(() => this.workPlanService.getById(this.id()));
+  /**
+   * The owner and Admin edit everything; the account responsible for the project sets its status and manages
+   * its activities; the account responsible for an activity only sets that activity's status.
+   */
+  canEdit = computed(() => {
+    const p = this.plan();
+    return !!p && canEditPlan(this.auth.user(), p);
+  });
+  /** Adding, editing and removing activities and to-dos: also the account the project is assigned to. */
+  canManage = computed(() => {
+    const p = this.plan();
+    return !!p && canManageActivities(this.auth.user(), p);
+  });
+  canSetProjectStatus = computed(() => {
+    const p = this.plan();
+    return !!p && canSetPlanStatus(this.auth.user(), p);
+  });
+
+  /** Changing an activity's status and ticking its to-dos. */
+  canSetStatus(activity: Activity): boolean {
+    const p = this.plan();
+    return !!p && canSetActivityStatus(this.auth.user(), p, activity);
+  }
   /** In the order they start. */
   activities = computed(() => sortActivities(this.plan()?.activities ?? []));
 
