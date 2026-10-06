@@ -1,0 +1,30 @@
+// One Worker serves the Angular app (static assets) and its API on the same origin.
+// https://planner.planner-moph.workers.dev
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "planner",
+  "main": "server/index.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "dist/annual-work-planning/browser",
+    "binding": "ASSETS",
+    // A reload on /plans/123 gets index.html, so the Angular router handles the address.
+    "not_found_handling": "single-page-application",
+    // Everything else is served as a file without running the Worker (free and not counted).
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "moph-planner-db",
+      "database_id": "2cb9de1c-ef49-4e54-a4df-ad36200290a2",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    // PBKDF2 rounds for new password hashes. Workers allow at most 100000; lower it if `wrangler tail`
+    // shows sign-ins running out of CPU time. Stored hashes keep their own count and are redone at sign-in.
+    "PASSWORD_ITERATIONS": "100000"
+  },
+  "observability": { "enabled": true }
+}

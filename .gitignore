@@ -45,3 +45,7 @@ Thumbs.db
 
 # Local data files (the app keeps its data in the browser, not here)
 /public/data/
+
+# Cloudflare (wrangler): the local D1 database and local secrets
+/.wrangler/
+.dev.vars*

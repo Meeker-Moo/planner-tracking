@@ -85,9 +85,4 @@ export const SEED_USERS = new InjectionToken<SeedUser[]>('SEED_USERS', {
   factory: () => (environment.env === 'develop' ? DEVELOP_SEED_USERS : PRODUCTION_SEED_USERS),
 });
 
-/** How long "จดจำการเข้าสู่ระบบ" keeps someone signed in on this browser. */
-export const REMEMBER_DAYS = 30;
-
-/** Wrong passwords in a row before the account is locked, and for how long. */
-export const MAX_FAILED_LOGINS = 5;
-export const LOCK_MINUTES = 15;
+export { LOCK_MINUTES, MAX_FAILED_LOGINS, REMEMBER_DAYS } from './auth.limits';

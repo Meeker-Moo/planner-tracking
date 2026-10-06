@@ -7,21 +7,13 @@ import { AuthService } from '../auth/auth.service';
 import { LEGACY_OWNER_ID } from '../auth/auth.config';
 import { canEditPlan, canManageActivities, canSetActivityStatus, canSetPlanStatus, canUseProjects, canViewPlan } from '../auth/permissions';
 import { UserStore } from '../auth/user-store.service';
-import { currentFiscalYear, withFiscalYear } from '../../shared/utils/date.util';
+import { withFiscalYear, yearRange } from '../../shared/utils/date.util';
 import { uid } from '../../shared/utils/id.util';
 
 const STORAGE_KEY = 'awp:plans:v1';
 
 /** A project as saved by the short-lived version that assigned projects instead of naming a responsible account. */
 type SavedPlan = WorkPlan & { assigneeIds?: string[] };
-
-/** Every fiscal year from the earliest project to the latest (and the current year), newest first, with no gaps. */
-function yearRange(plans: WorkPlan[]): number[] {
-  const years = [...plans.map((p) => p.year), currentFiscalYear()].filter(Number.isInteger);
-  const newest = Math.max(...years);
-  const oldest = Math.min(...years);
-  return Array.from({ length: newest - oldest + 1 }, (_, i) => newest - i);
-}
 
 /**
  * Everyone's projects, kept in one store. `plans` is the part the signed-in account may see (permissions.ts):
@@ -52,10 +44,10 @@ export class WorkPlanService {
   readonly allPlans = computed(() => (canUseProjects(this.auth.user()) ? this.plansSignal().map((p) => this.withNames(p)) : []));
 
   /** The fiscal years of `plans` (see yearRange). */
-  readonly years = computed(() => yearRange(this.plans()));
+  readonly years = computed(() => yearRange(this.plans().map((p) => p.year)));
 
   /** The fiscal years of `allPlans`, for the Dashboard. */
-  readonly allYears = computed(() => yearRange(this.allPlans()));
+  readonly allYears = computed(() => yearRange(this.allPlans().map((p) => p.year)));
 
   /** The fiscal years that have at least one project, newest first. */
   readonly yearsWithPlans = computed(() =>

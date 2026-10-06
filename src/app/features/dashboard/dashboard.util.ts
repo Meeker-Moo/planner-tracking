@@ -3,7 +3,8 @@ import { WorkPlan, WorkStatus } from '../../core/models/work-plan.model';
 import { monthSpanInFiscalYear } from '../../shared/utils/date.util';
 
 export interface AttentionItem {
-  plan: WorkPlan;
+  /** Only what the list shows: the server sends this much of other people's projects (server/plans.ts). */
+  plan: Pick<WorkPlan, 'id' | 'name' | 'responsible' | 'endDate' | 'status'>;
   /** delayed: marked as delayed; overdue: still planned / in progress but its end date has passed. */
   reason: 'delayed' | 'overdue';
 }

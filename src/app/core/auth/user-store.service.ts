@@ -1,13 +1,13 @@
 import { computed, DestroyRef, inject, Injectable, signal } from '@angular/core';
 import { StorageService } from '../services/storage.service';
 import { uid } from '../../shared/utils/id.util';
-import { LOCK_MINUTES, MAX_FAILED_LOGINS, SEED_USERS } from './auth.config';
+import { SEED_USERS } from './auth.config';
+import { LOCK_MINUTES, MAX_FAILED_LOGINS, USERNAME_PATTERN } from './auth.limits';
 import { hashPassword, MIN_PASSWORD_LENGTH, needsRehash, temporaryPassword, verifyPassword } from './password.util';
 import { Actor, assignableRoles, canManageUser } from './permissions';
 import { AppUser, AuthError, Role, SeedUser, StoredUser } from './user.model';
 
 const STORAGE_KEY = 'awp:users:v1';
-const USERNAME_PATTERN = /^[a-z0-9._-]{3,32}$/;
 
 export interface NewUserInput {
   username: string;

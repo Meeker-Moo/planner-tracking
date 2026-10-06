@@ -94,6 +94,14 @@ export function currentFiscalYear(): number {
   return fiscalYearOf(todayIso())!;
 }
 
+/** Every fiscal year from the earliest of `years` to the latest (and `current`), newest first, with no gaps. */
+export function yearRange(years: number[], current = currentFiscalYear()): number[] {
+  const all = [...years, current].filter(Number.isInteger);
+  const newest = Math.max(...all);
+  const oldest = Math.min(...all);
+  return Array.from({ length: newest - oldest + 1 }, (_, i) => newest - i);
+}
+
 /** The 12 months of a fiscal year in order, October first. `year` is Gregorian, `month` is 0-based. */
 export function fiscalMonths(fiscalYear: number): { year: number; month: number }[] {
   const endYear = fiscalYear - 543;

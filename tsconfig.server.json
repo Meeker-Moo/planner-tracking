@@ -1,0 +1,12 @@
+/* The Worker (server/), type-checked on its own with the Workers runtime types; it also pulls in the plain
+   modules of src/ it imports. tsconfig.worker.json is the Excel web worker, not this. */
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "lib": ["es2023"],
+    "types": ["@cloudflare/workers-types"]
+  },
+  "include": ["server/**/*.ts"]
+}

@@ -38,9 +38,9 @@ export async function verifyPassword(password: string, stored: string, username:
   return toBase64(await pbkdf2(password, fromBase64(salt), Number(iterations))) === hash;
 }
 
-/** True when a hash should be redone at the next successful sign-in. */
-export function needsRehash(stored: string): boolean {
-  return !stored.startsWith(`pbkdf2$${PASSWORD_ITERATIONS}$`);
+/** True when a hash should be redone at the next successful sign-in (it is not PBKDF2 with `iterations` rounds). */
+export function needsRehash(stored: string, iterations = PASSWORD_ITERATIONS): boolean {
+  return !stored.startsWith(`pbkdf2$${iterations}$`);
 }
 
 /** A random one-time password for a new or reset account: 10 characters without look-alikes such as 0/O and 1/l. */
