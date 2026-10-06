@@ -1,24 +1,38 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { StorageService } from './storage.service';
+import { ApiService } from './api.service';
 import { DataScopeService } from './data-scope.service';
-import { planBelongsTo, withOwners } from './owned-records';
+import { planBelongsTo } from './owned-records';
+import { RecordSync } from './record-sync';
+import { SessionLoader } from './session-loader';
 import { Activity, WorkPlan, WorkPlanInput } from '../models/work-plan.model';
 import { AuthService } from '../auth/auth.service';
-import { LEGACY_OWNER_ID } from '../auth/auth.config';
 import { canEditPlan, canManageActivities, canSetActivityStatus, canSetPlanStatus, canUseProjects, canViewPlan } from '../auth/permissions';
 import { UserStore } from '../auth/user-store.service';
-import { withFiscalYear, yearRange } from '../../shared/utils/date.util';
+import { AuthError, authErrorMessage } from '../auth/user.model';
+import { YearSummary } from '../../features/dashboard/dashboard.util';
+import { todayIso, withFiscalYear, yearRange } from '../../shared/utils/date.util';
 import { uid } from '../../shared/utils/id.util';
 
-const STORAGE_KEY = 'awp:plans:v1';
+/** The Dashboard's overview of a fiscal year (GET /api/plans/summary). */
+export interface PlanSummary {
+  /** Every fiscal year from the earliest project of anyone's to the latest (and the current year), newest first. */
+  years: number[];
+  summary: YearSummary;
+}
 
-/** A project as saved by the short-lived version that assigned projects instead of naming a responsible account. */
-type SavedPlan = WorkPlan & { assigneeIds?: string[] };
+/** Tells the person why a change was not saved, unless they were signed out (AuthService takes care of that). */
+export function reportSaveError(error: unknown): void {
+  if (error instanceof AuthError && (error.code === 'UNAUTHENTICATED' || error.code === 'PASSWORD_CHANGE_REQUIRED')) return;
+  alert(error instanceof AuthError && error.code === 'CONFLICT' ? authErrorMessage(error) : `บันทึกไม่สำเร็จ: ${authErrorMessage(error)}`);
+}
 
 /**
- * Everyone's projects, kept in one store. `plans` is the part the signed-in account may see (permissions.ts):
- * its own, the ones it is responsible for, and the ones where it is responsible for an activity — or all of
- * them for Admin, narrowed by the person filter. `allPlans` is every project, for the Dashboard's overview.
+ * The projects the signed-in account may see (permissions.ts), loaded from the API (server/plans.ts): its own, the
+ * ones it is responsible for, and the ones where it is responsible for an activity — or all of them for Admin.
+ * `plans` narrows Admin's to the person filter. The Dashboard's overview of everyone's projects is `summary()`.
+ *
+ * A change shows at once and is then sent to the API, which applies the same rules again and answers with the
+ * stored project; when it refuses (or someone else saved first), the person is told and the projects are reloaded.
  *
  * Changes are checked here too: the owner and Admin may change anything; the account responsible for (assigned)
  * a project its status and its activities, but not its details, and it may not delete it; the account responsible
@@ -30,7 +44,38 @@ export class WorkPlanService {
   private readonly auth = inject(AuthService);
   private readonly scope = inject(DataScopeService);
   private readonly users = inject(UserStore);
+  private readonly api = inject(ApiService);
   private readonly plansSignal = signal<WorkPlan[]>([]);
+
+  private readonly sync = new RecordSync<WorkPlan>({
+    current: (id) => this.find(id),
+    send: async (plan, version) => {
+      const { plan: saved } = version
+        ? await this.api.put<{ plan: WorkPlan }>(`/plans/${encodeURIComponent(plan.id)}`, { ...plan, updatedAt: version })
+        : await this.api.post<{ plan: WorkPlan }>('/plans', plan);
+      return saved;
+    },
+    sendDelete: (id) => this.api.delete(`/plans/${encodeURIComponent(id)}`),
+    saved: (plan) => this.plansSignal.update((list) => list.map((p) => (p.id === plan.id ? plan : p))),
+    failed: (error) => {
+      reportSaveError(error);
+      void this.loader.reload();
+    },
+  });
+
+  private readonly loader = new SessionLoader(
+    () => {
+      const user = this.auth.user();
+      return user && !user.mustChangePassword && canUseProjects(user) ? `${user.id}:${user.role}` : null;
+    },
+    async (isCurrent) => {
+      const { plans } = await this.api.get<{ plans: WorkPlan[] }>('/plans');
+      if (!isCurrent()) return;
+      this.sync.loaded(plans);
+      this.plansSignal.set(plans);
+    },
+    () => this.plansSignal.set([]),
+  );
 
   readonly plans = computed(() => {
     const user = this.auth.user();
@@ -40,29 +85,27 @@ export class WorkPlanService {
       .map((p) => this.withNames(p));
   });
 
-  /** Every project, whoever it belongs to: the Dashboard's overview is the same for Admin and User. */
-  readonly allPlans = computed(() => (canUseProjects(this.auth.user()) ? this.plansSignal().map((p) => this.withNames(p)) : []));
-
   /** The fiscal years of `plans` (see yearRange). */
   readonly years = computed(() => yearRange(this.plans().map((p) => p.year)));
-
-  /** The fiscal years of `allPlans`, for the Dashboard. */
-  readonly allYears = computed(() => yearRange(this.allPlans().map((p) => p.year)));
 
   /** The fiscal years that have at least one project, newest first. */
   readonly yearsWithPlans = computed(() =>
     Array.from(new Set(this.plans().map((p) => p.year))).sort((a, b) => b - a),
   );
 
-  constructor(private readonly storage: StorageService) {
-    const loaded = this.storage.get<SavedPlan[]>(STORAGE_KEY);
-    if (loaded) {
-      // Data saved before fiscal years existed has the calendar year in `year`; recompute it from the start date.
-      // Data saved before accounts existed has no owner; it goes to the account that used to be the only one.
-      const { items, changed } = withOwners(loaded.map(({ assigneeIds: _dropped, ...p }) => withFiscalYear(p)), LEGACY_OWNER_ID);
-      this.plansSignal.set(items);
-      if (changed || loaded.some((p) => 'assigneeIds' in p)) this.persist();
-    }
+  /** Resolves once the projects of the signed-in account are loaded. */
+  ready(): Promise<void> {
+    return this.loader.ready();
+  }
+
+  /** Resolves once every change made so far has been sent. */
+  settled(): Promise<void> {
+    return this.sync.settled();
+  }
+
+  /** The Dashboard's overview of every project of the fiscal year, the same for Admin and User. */
+  summary(year: number): Promise<PlanSummary> {
+    return this.api.get<PlanSummary>(`/plans/summary?year=${year}&today=${todayIso()}`);
   }
 
   /** The project, if the signed-in account may see it (Admin's person filter does not apply). */
@@ -73,7 +116,7 @@ export class WorkPlanService {
 
   add(input: WorkPlanInput): WorkPlan {
     const now = new Date().toISOString();
-    const plan: WorkPlan = {
+    const plan: WorkPlan = withFiscalYear({
       ...input,
       ...this.responsible(input),
       id: uid(),
@@ -81,9 +124,9 @@ export class WorkPlanService {
       statusUpdatedAt: now,
       createdAt: now,
       updatedAt: now,
-    };
+    });
     this.plansSignal.update((list) => [...list, plan]);
-    this.persist();
+    this.sync.save(plan.id);
     return plan;
   }
 
@@ -99,9 +142,9 @@ export class WorkPlanService {
     const now = new Date().toISOString();
     const statusUpdatedAt = changes.status !== undefined && changes.status !== plan.status ? now : plan.statusUpdatedAt;
     this.plansSignal.update((list) =>
-      list.map((p) => (p.id === id ? { ...p, ...changes, ownerId: plan.ownerId, statusUpdatedAt, updatedAt: now } : p)),
+      list.map((p) => (p.id === id ? withFiscalYear({ ...p, ...changes, ownerId: plan.ownerId, statusUpdatedAt, updatedAt: now }) : p)),
     );
-    this.persist();
+    this.sync.save(id);
   }
 
   /** Only the owner and Admin may delete a project. */
@@ -109,7 +152,7 @@ export class WorkPlanService {
     const plan = this.find(id);
     if (!plan || !canEditPlan(this.auth.user(), plan)) return;
     this.plansSignal.update((list) => list.filter((p) => p.id !== id));
-    this.persist();
+    this.sync.delete(id);
   }
 
   /**
@@ -192,10 +235,6 @@ export class WorkPlanService {
           : p,
       ),
     );
-    this.persist();
-  }
-
-  private persist(): void {
-    this.storage.set(STORAGE_KEY, this.plansSignal());
+    this.sync.save(planId);
   }
 }

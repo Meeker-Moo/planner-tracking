@@ -1,22 +1,15 @@
 import { TestBed } from '@angular/core/testing';
-import { freshTestBed } from './auth.testing';
+import { Router } from '@angular/router';
+import { backend, freshTestBed, resetBackend } from './auth.testing';
 import { AuthService, homeUrlFor, safeReturnUrl } from './auth.service';
-import { UserStore } from './user-store.service';
-
-const admin = { id: 'u-admin', role: 'ADMIN' as const };
-
-/** An AuthService that reads the stored session again, as a reload of the page would. */
-function reloaded(): AuthService {
-  TestBed.resetTestingModule();
-  return TestBed.inject(AuthService);
-}
+import { WorkPlanService } from '../services/work-plan.service';
 
 describe('AuthService', () => {
   let auth: AuthService;
 
-  beforeEach(() => {
-    localStorage.clear();
-    freshTestBed(null);
+  beforeEach(async () => {
+    await resetBackend();
+    await freshTestBed(null);
     auth = TestBed.inject(AuthService);
   });
 
@@ -27,64 +20,57 @@ describe('AuthService', () => {
     expect(auth.isLoggedIn()).toBe(false);
   });
 
-  it('signs in for this tab only, ignoring the case of the username', async () => {
-    const result = await auth.login('  User1 ', 'user1234', false);
+  it('signs in through the API and asks to be remembered', async () => {
+    const result = await auth.login('  User1 ', 'user1234', true);
     expect(result.ok).toBe(true);
     expect(auth.user()).toMatchObject({ id: 'u-user1', username: 'user1', role: 'USER' });
-    expect(JSON.parse(sessionStorage.getItem('awp.session')!)).toMatchObject({ userId: 'u-user1', expiresAt: null });
-    expect(localStorage.getItem('awp.session')).toBeNull();
+    expect(backend.requests.at(-1)).toMatchObject({ method: 'POST', path: '/auth/login', body: { username: '  User1 ', remember: true } });
   });
 
-  it('remembers a session on this browser until it expires', async () => {
-    await auth.login('user1', 'user1234', true);
-    sessionStorage.clear();
-    expect(reloaded().user()?.id).toBe('u-user1');
-
-    const session = JSON.parse(localStorage.getItem('awp.session')!);
-    localStorage.setItem('awp.session', JSON.stringify({ ...session, expiresAt: Date.now() - 1 }));
-    expect(reloaded().isLoggedIn()).toBe(false);
-    expect(localStorage.getItem('awp.session')).toBeNull();
+  it('finds the account of the session when the app starts', async () => {
+    await freshTestBed('u-admin');
+    expect(TestBed.inject(AuthService).user()?.id).toBe('u-admin');
+    await freshTestBed(null);
+    expect(TestBed.inject(AuthService).isLoggedIn()).toBe(false);
   });
 
-  it('signs out everywhere', async () => {
+  it('signs out here and on the server', async () => {
     await auth.login('user1', 'user1234', true);
     auth.logout();
     expect(auth.isLoggedIn()).toBe(false);
-    expect(reloaded().isLoggedIn()).toBe(false);
+    await vi.waitFor(() => expect(backend.session).toBeNull());
   });
 
-  it('drops the session at once when the account is deactivated or its password reset', async () => {
-    const store = TestBed.inject(UserStore);
-    await auth.login('user1', 'user1234', true);
-    await store.update(admin, 'u-user1', { active: false });
-    expect(auth.user()).toBeNull();
+  it('sends the account to the login page when a call finds its session gone (deactivated, reset, expired)', async () => {
+    await freshTestBed('u-user1');
+    const session = TestBed.inject(AuthService);
+    const router = TestBed.inject(Router);
+    const navigate = vi.spyOn(router, 'navigate');
+    backend.session = null;
 
-    await store.update(admin, 'u-user1', { active: true });
-    expect(auth.user()).toBeNull();
-    await auth.login('user1', 'user1234', false);
-    expect(auth.user()?.id).toBe('u-user1');
-    await store.resetPassword(admin, 'u-user1');
-    expect(auth.user()).toBeNull();
+    await TestBed.inject(WorkPlanService)
+      .summary(2569)
+      .catch(() => undefined);
+    expect(session.user()).toBeNull();
+    expect(navigate).toHaveBeenCalledWith(['/login'], expect.anything());
   });
 
-  it('follows a rename or role change of the signed-in account', async () => {
-    await auth.login('user1', 'user1234', false);
-    await TestBed.inject(UserStore).update({ id: 'u-superadmin', role: 'SUPER_ADMIN' }, 'u-user1', { displayName: 'ชื่อใหม่', role: 'ADMIN' });
-    expect(auth.user()).toMatchObject({ displayName: 'ชื่อใหม่', role: 'ADMIN' });
+  it('sends an account that must change its password to do so', async () => {
+    backend.users.find((u) => u.id === 'u-user1')!.mustChangePassword = true;
+    await freshTestBed('u-user1');
+    const session = TestBed.inject(AuthService);
+    expect(session.user()?.mustChangePassword).toBe(true);
+
+    await session.changePassword('user1234', 'new-password-1');
+    expect(session.user()?.mustChangePassword).toBe(false);
+    session.logout();
+    expect((await session.login('user1', 'new-password-1', false)).ok).toBe(true);
+  });
+
+  it('tells which role the account has', async () => {
+    await auth.login('admin', 'admin1234', false);
     expect(auth.hasRole('ADMIN', 'SUPER_ADMIN')).toBe(true);
     expect(auth.hasRole('USER')).toBe(false);
-  });
-
-  it('ignores a session saved by the single-account version', () => {
-    sessionStorage.setItem('awp.session', JSON.stringify({ username: 'admin', displayName: 'ผู้ดูแลระบบ', expiresAt: null }));
-    expect(reloaded().isLoggedIn()).toBe(false);
-  });
-
-  it('changes the signed-in account’s password', async () => {
-    await auth.login('user1', 'user1234', false);
-    await auth.changePassword('user1234', 'new-password-1');
-    auth.logout();
-    expect((await auth.login('user1', 'new-password-1', false)).ok).toBe(true);
   });
 
   it('sends Super Admin to user management and everyone else to the dashboard', () => {

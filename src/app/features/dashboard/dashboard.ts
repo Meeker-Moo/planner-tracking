@@ -1,13 +1,10 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, resource } from '@angular/core';
 import { Toolbar } from '../../shared/components/toolbar/toolbar';
 import { WorkPlanService } from '../../core/services/work-plan.service';
 import { FiscalYearStateService } from '../../core/services/fiscal-year-state.service';
 import { STATUS_LIST, STATUS_MAP, THAI_MONTHS } from '../../core/models/status.constant';
-import {
-  fiscalYearRangeLabel,
-  formatMonthYearShort,
-  todayIso,
-} from '../../shared/utils/date.util';
+import { fiscalYearRangeLabel, formatMonthYearShort, todayIso, yearRange } from '../../shared/utils/date.util';
+import { authErrorMessage } from '../../core/auth/user.model';
 import { summarizeYear } from './dashboard.util';
 
 // One color for every nominal comparison (type, month); status bars keep the status colors used across the app.
@@ -22,7 +19,7 @@ const COLUMN_MAX_HEIGHT_PX = 120;
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <app-toolbar
-      [years]="workPlanService.allYears()"
+      [years]="years()"
       [selectedYear]="selectedYear()"
       [showActions]="false"
       (yearChange)="selectedYear.set($event)"
@@ -35,7 +32,14 @@ const COLUMN_MAX_HEIGHT_PX = 120;
           <p class="text-sm text-slate-500">ปีงบประมาณ {{ selectedYear() }} ({{ fiscalRange(selectedYear()) }})</p>
         </div>
 
-        @if (summary().projectCount === 0) {
+        @if (overview.error(); as error) {
+          <div class="bg-white border border-red-200 rounded-xl px-4 py-12 text-center text-red-600">
+            โหลดสรุปไม่สำเร็จ: {{ errorMessage(error) }}
+            <button type="button" class="ml-2 font-semibold underline" (click)="overview.reload()">ลองใหม่</button>
+          </div>
+        } @else if (!overview.hasValue()) {
+          <div class="bg-white border border-slate-200 rounded-xl px-4 py-12 text-center text-slate-400">กำลังโหลด…</div>
+        } @else if (summary().projectCount === 0) {
           <div class="bg-white border border-slate-200 rounded-xl px-4 py-12 text-center text-slate-400">
             ยังไม่มีโครงการในปีนี้
           </div>
@@ -219,13 +223,21 @@ export class Dashboard {
   readonly fiscalRange = fiscalYearRangeLabel;
   readonly formatMonth = formatMonthYearShort;
 
-  private readonly today = todayIso();
+  readonly errorMessage = authErrorMessage;
 
   /** Shared with the other pages, so the year chosen here stays chosen when moving between them. */
   readonly selectedYear = inject(FiscalYearStateService).year;
 
-  // Every project, for every role: the overview is the same for Admin and User (see WorkPlanService.allPlans).
-  summary = computed(() => summarizeYear(this.workPlanService.allPlans(), this.selectedYear(), this.today));
+  // Every project, for every role: the overview is the same for Admin and User, so it is summed up by the server,
+  // which sends the numbers rather than other people's projects (GET /api/plans/summary).
+  readonly overview = resource({
+    params: () => this.selectedYear(),
+    loader: ({ params }) => this.workPlanService.summary(params),
+  });
+
+  summary = computed(() => (this.overview.hasValue() ? this.overview.value().summary : summarizeYear([], this.selectedYear(), todayIso())));
+
+  years = computed(() => (this.overview.hasValue() ? this.overview.value().years : yearRange([])));
 
   overdueCount = computed(() => this.summary().attention.filter((i) => i.reason === 'overdue').length);
 

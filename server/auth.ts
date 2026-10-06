@@ -97,9 +97,10 @@ export async function logout({ request, env }: Context): Promise<Response> {
   return json({ ok: true }, 200, { 'Set-Cookie': cookie(SESSION_COOKIE, '', 0) });
 }
 
-/** GET /api/auth/me */
-export async function me({ user }: Context): Promise<Response> {
-  return json({ user: toApiUser(user!) });
+/** GET /api/auth/me: the account of the session cookie, or `user: null` (not an error: the app asks at every start). */
+export async function me({ request, env, now }: Context): Promise<Response> {
+  const session = await sessionUser(request, env.DB, now);
+  return json({ user: session ? toApiUser(session.user) : null });
 }
 
 /**

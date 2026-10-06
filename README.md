@@ -2,19 +2,40 @@
 
 This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 22.1.2.
 
-## Publishing (GitHub Pages)
+## Publishing (Cloudflare)
 
-Every push to `main` runs [.github/workflows/deploy.yml](.github/workflows/deploy.yml): it installs, runs the tests
-(a failing test stops the deploy), builds for the sub-path and publishes to
-**https://meeker-moo.github.io/planner-tracking/**.
+The app and its API run on Cloudflare's free plan as one Worker
+([wrangler.jsonc](wrangler.jsonc)) at **https://planner.planner-moph.workers.dev**: the Worker serves the built
+Angular files, and its code in [server/](server/) answers `/api/*` with the data in a D1 (SQLite) database,
+`moph-planner-db`.
 
-One-time setup on GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions**. Then run the workflow
-once (**Actions → Deploy to GitHub Pages → Run workflow**), or just push again.
+Every push to `main` runs [.github/workflows/deploy.yml](.github/workflows/deploy.yml): it installs, runs both test
+suites (a failing test stops the deploy), builds, applies new database migrations
+([migrations/](migrations/)) and deploys the Worker. It needs two repository secrets (**Settings → Secrets and
+variables → Actions**): `CLOUDFLARE_API_TOKEN` (template "Edit Cloudflare Workers" plus D1 Edit) and
+`CLOUDFLARE_ACCOUNT_ID`.
 
-Who can open it: a GitHub Pages site is reachable by anyone who has the address; GitHub offers no "anyone with the
-link" sign-in for it (organization-only access needs GitHub Enterprise Cloud). The page tells search engines not to
-index it (`noindex`), so it does not show up in results, but the link can be forwarded to anyone. The app keeps its
-data only in each visitor's own browser, so the published site holds no project data.
+To deploy by hand instead: `npx wrangler login`, `npm run db:migrate:remote`, `npx ng build`, `npx wrangler deploy`.
+`npx wrangler tail` shows the live requests and errors, including how much CPU time a sign-in takes (the free plan
+allows 10 ms per request; if sign-ins fail with "exceeded CPU", lower `PASSWORD_ITERATIONS` in wrangler.jsonc).
+
+### The first Super Admin
+
+The database starts empty. After the first deploy, create the first account from your own machine (signed in with
+`npx wrangler login`); it asks for the password without showing it and stores only its hash:
+
+```bash
+npm run create-super-admin -- --remote <username> "<display name>"
+```
+
+Then sign in at the address above and create the other accounts on the user management page. The same command
+adds another Super Admin if every one is locked out.
+
+### Backups
+
+D1's Time Travel can put the database back to any minute of the last 7 days on the free plan:
+`npx wrangler d1 time-travel restore moph-planner-db --timestamp=<ISO time>`. For a copy of your own, run
+`npx wrangler d1 export moph-planner-db --remote --output=backup.sql` now and then (keep it out of the repository).
 
 ## Login and roles
 
@@ -44,39 +65,36 @@ stays hidden until you sign in. There are three roles:
   The account must pick its own password at its next sign-in. Anyone can change their password from the account menu.
 - Five wrong passwords in a row lock the account for 15 minutes. Deactivating an account or resetting its password
   signs it out at once. Accounts are never deleted, only deactivated, so their projects keep an owner.
-- Data is not imported or exported as JSON any more (it will come from the database). The project list and
+- Data is not imported or exported as JSON any more (it lives in the database). The project list and
   Timeline keep "ส่งออก Excel", which saves the projects shown (with their activities and a picture of the
   Timeline) as an .xlsx file.
 
-A login lasts until the tab is closed, or 30 days on that browser when "จดจำการเข้าสู่ระบบ" is ticked.
+A login lasts until the browser is closed (12 hours at most), or 30 days on that browser when
+"จดจำการเข้าสู่ระบบ" is ticked. The session is an HttpOnly cookie; the server keeps only a hash of it.
 
-### Accounts on first use
-
-Until the app has a database ([golive-plan.md](golive-plan.md)), the accounts live in each browser's localStorage
-(`awp:users:v1`), next to the projects and events. A browser with no accounts yet creates them from
-[src/app/core/auth/auth.config.ts](src/app/core/auth/auth.config.ts):
-
-- **Production** (`ng build`, GitHub Pages): `superadmin` with the temporary password `ChangeMe-2569` (it must be
-  changed at the first sign-in), and `admin` (Admin) with the password of the old single account. Projects and
-  events saved before accounts existed belong to `admin`.
-- **Develop** (`ng serve`): `superadmin` / `super1234`, `admin` / `admin1234`, `user1` and `user2` / `user1234`.
-  The login page lists them; click one to fill the form.
-
-To start over in a browser, remove `awp:users:v1` from its localStorage (the projects and events stay).
-
-What it protects: everything is checked in the browser, so it keeps casual visitors and colleagues apart but is not
-real security. Anyone who knows how can edit the browser's storage, and each browser has its own accounts and data.
-Real accounts shared between browsers come with the server in [golive-plan.md](golive-plan.md).
+Every rule is checked by the server ([server/](server/), using the same
+[permissions.ts](src/app/core/auth/permissions.ts) as the pages), so a page that was tampered with gets nothing more.
 
 ## Development server
 
-To start a local development server, run:
+The app needs its API. Once, set up a local database with the develop accounts (it lives in `.wrangler/`):
 
 ```bash
-ng serve
+npm run db:migrate:local
+npm run db:seed:local
 ```
 
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
+Then run the API and the app, each in its own terminal:
+
+```bash
+npm run api     # the Worker and the local D1 on http://localhost:8787
+npm start       # ng serve on http://localhost:4200, which passes /api to the Worker (proxy.conf.json)
+```
+
+Open `http://localhost:4200/`. The develop accounts are `superadmin` / `super1234`, `admin` / `admin1234`, and
+`user1` and `user2` / `user1234`; the login page lists them, click one to fill the form. Both servers reload when
+their source files change. A new file in [migrations/](migrations/) is applied with `npm run db:migrate:local`
+(and by the deploy, remotely).
 
 ## Code scaffolding
 
@@ -109,6 +127,8 @@ To execute unit tests with the [Vitest](https://vitest.dev/) test runner, use th
 ```bash
 ng test
 ```
+
+The server's rules have their own tests (and a type check), run with `npm run test:server`.
 
 ## Running end-to-end tests
 

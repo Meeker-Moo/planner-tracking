@@ -119,7 +119,7 @@ const ROLE_ORDER: Record<Role, number> = { SUPER_ADMIN: 0, ADMIN: 1, USER: 2 };
                     </div>
                   </td>
                   <td class="px-4 py-3 text-slate-600 whitespace-nowrap">
-                    <div>{{ u.createdBy ? store.displayName(u.createdBy) : 'ระบบ' }}</div>
+                    <div>{{ u.createdBy ? createdByName(u.createdBy) : 'ระบบ' }}</div>
                     <div class="text-xs text-slate-400">{{ formatDate(u.createdAt.slice(0, 10)) }}</div>
                   </td>
                   <td class="px-4 py-3 text-right whitespace-nowrap">
@@ -266,7 +266,7 @@ export class Users {
   copied = signal(false);
 
   readonly me = this.auth.user;
-  readonly users = this.store.users;
+  readonly users = this.store.accounts;
   readonly roles = computed(() => assignableRoles(this.me()));
   readonly isAdminOnly = computed(() => this.me()?.role === 'ADMIN');
   readonly activeCount = computed(() => this.users().filter((u) => u.active).length);
@@ -310,6 +310,15 @@ export class Users {
     }
   });
 
+  constructor() {
+    // Show what other admins changed since the accounts were loaded.
+    void this.store.reload();
+  }
+
+  createdByName(id: string): string {
+    return this.users().find((u) => u.id === id)?.displayName ?? '–';
+  }
+
   canManage(user: AppUser): boolean {
     return canManageUser(this.me(), user);
   }
@@ -339,10 +348,10 @@ export class Users {
     try {
       const editing = this.editing();
       if (editing) {
-        await this.store.update(actor, editing.id, { displayName: input.displayName, role: input.role });
+        await this.store.update(editing.id, { displayName: input.displayName, role: input.role });
         this.closeForm();
       } else {
-        const { user, tempPassword } = await this.store.create(actor, input);
+        const { user, tempPassword } = await this.store.create(input);
         this.closeForm();
         this.showPassword(user, tempPassword, true);
       }
@@ -360,9 +369,9 @@ export class Users {
     if (!p || !actor) return;
     try {
       if (p.kind === 'reset') {
-        this.showPassword(p.user, await this.store.resetPassword(actor, p.user.id), false);
+        this.showPassword(p.user, await this.store.resetPassword(p.user.id), false);
       } else {
-        await this.store.update(actor, p.user.id, { active: p.kind === 'activate' });
+        await this.store.update(p.user.id, { active: p.kind === 'activate' });
       }
     } catch (err) {
       alert(authErrorMessage(err));

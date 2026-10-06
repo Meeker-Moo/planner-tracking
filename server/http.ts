@@ -1,13 +1,7 @@
 import { AuthErrorCode } from '../src/app/core/auth/user.model';
 
-/** The `code` of an error body: the app's AuthError codes plus the ones only the API gives. */
-export type ApiErrorCode =
-  | AuthErrorCode
-  | 'UNAUTHENTICATED'
-  | 'PASSWORD_CHANGE_REQUIRED'
-  | 'CONFLICT'
-  | 'BAD_REQUEST'
-  | 'SERVER_ERROR';
+/** The `code` of an error body: the app reads it into an AuthError (user.model.ts). */
+export type ApiErrorCode = Exclude<AuthErrorCode, 'NETWORK'>;
 
 /** A refusal that becomes a JSON error response `{ code, ...extra }`. */
 export class ApiError extends Error {

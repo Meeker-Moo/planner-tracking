@@ -1,18 +1,5 @@
 import { Owned, PlanAccess } from '../auth/permissions';
 
-type OwnedRecord = { id: string; ownerId?: string };
-
-/** Records saved before accounts existed get `ownerId`; `changed` says whether any did. */
-export function withOwners<T extends OwnedRecord>(items: T[], ownerId: string): { items: T[]; changed: boolean } {
-  let changed = false;
-  const result = items.map((item) => {
-    if (item.ownerId) return item;
-    changed = true;
-    return { ...item, ownerId };
-  });
-  return { items: result, changed };
-}
-
 /** Assignee ids without repeats, the owner, or ids `isAssignable` rejects; undefined when none are left. */
 export function cleanAssignees(
   ids: string[] | undefined,

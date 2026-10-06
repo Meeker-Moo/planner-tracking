@@ -12,7 +12,7 @@ import { createUser, listUsers, resetPassword, updateUser, userDirectory } from 
 const routes: Route[] = [
   { method: 'POST', path: '/api/auth/login', handler: login, public: true },
   { method: 'POST', path: '/api/auth/logout', handler: logout, public: true },
-  { method: 'GET', path: '/api/auth/me', handler: me, beforePasswordChange: true },
+  { method: 'GET', path: '/api/auth/me', handler: me, public: true },
   { method: 'POST', path: '/api/auth/change-password', handler: changePassword, beforePasswordChange: true },
 
   { method: 'GET', path: '/api/users', handler: listUsers },

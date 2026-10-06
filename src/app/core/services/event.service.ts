@@ -1,16 +1,16 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { StorageService } from './storage.service';
+import { ApiService } from './api.service';
 import { DataScopeService } from './data-scope.service';
-import { belongsTo, cleanAssignees, withOwners } from './owned-records';
+import { belongsTo, cleanAssignees } from './owned-records';
+import { RecordSync } from './record-sync';
+import { SessionLoader } from './session-loader';
+import { reportSaveError } from './work-plan.service';
 import { AuthService } from '../auth/auth.service';
-import { LEGACY_OWNER_ID } from '../auth/auth.config';
-import { canReassign, canDelete, canEdit, canView } from '../auth/permissions';
+import { canReassign, canDelete, canEdit, canUseEvents, canUseProjects, canView } from '../auth/permissions';
 import { UserStore } from '../auth/user-store.service';
 import { CalendarEvent, CalendarEventInput } from '../models/calendar-event.model';
 import { toEventPriority } from '../models/status.constant';
 import { uid } from '../../shared/utils/id.util';
-
-const STORAGE_KEY = 'awp:events:v1';
 
 /** How events were saved before date ranges: one `date` plus a start and end time. */
 type SavedEvent = Omit<CalendarEvent, 'startDate' | 'endDate'> &
@@ -24,15 +24,47 @@ export function upgradeSavedEvent(saved: SavedEvent): CalendarEvent {
 }
 
 /**
- * Monthly Report events, kept in the browser like the projects but in their own store. As with projects,
- * `events` is the part the signed-in account may see, and changes it may not make are ignored.
+ * Monthly Report events from the API (server/events.ts), kept like the projects in WorkPlanService: `events` is the
+ * part the signed-in account may see, changes it may not make are ignored, and the rest is shown at once and sent.
  */
 @Injectable({ providedIn: 'root' })
 export class EventService {
   private readonly auth = inject(AuthService);
   private readonly scope = inject(DataScopeService);
   private readonly users = inject(UserStore);
+  private readonly api = inject(ApiService);
   private readonly eventsSignal = signal<CalendarEvent[]>([]);
+
+  private readonly sync = new RecordSync<CalendarEvent>({
+    current: (id) => this.find(id),
+    send: async (event, version) => {
+      const { event: saved } = version
+        ? await this.api.put<{ event: CalendarEvent }>(`/events/${encodeURIComponent(event.id)}`, { ...event, updatedAt: version })
+        : await this.api.post<{ event: CalendarEvent }>('/events', event);
+      return saved;
+    },
+    sendDelete: (id) => this.api.delete(`/events/${encodeURIComponent(id)}`),
+    saved: (event) => this.eventsSignal.update((list) => list.map((e) => (e.id === event.id ? event : e))),
+    failed: (error) => {
+      reportSaveError(error);
+      void this.loader.reload();
+    },
+  });
+
+  private readonly loader = new SessionLoader(
+    () => {
+      const user = this.auth.user();
+      return user && !user.mustChangePassword && canUseProjects(user) ? `${user.id}:${user.role}` : null;
+    },
+    async (isCurrent) => {
+      const { events } = await this.api.get<{ events: CalendarEvent[] }>('/events');
+      if (!isCurrent()) return;
+      const upgraded = events.map(upgradeSavedEvent);
+      this.sync.loaded(upgraded);
+      this.eventsSignal.set(upgraded);
+    },
+    () => this.eventsSignal.set([]),
+  );
 
   readonly events = computed(() => {
     const user = this.auth.user();
@@ -40,17 +72,19 @@ export class EventService {
     return this.eventsSignal().filter((e) => canView(user, e) && (owner === 'all' || belongsTo(e, owner)));
   });
 
-  constructor(private readonly storage: StorageService) {
-    const loaded = this.storage.get<SavedEvent[]>(STORAGE_KEY);
-    if (Array.isArray(loaded)) {
-      // Events saved before accounts existed go to the account that used to be the only one.
-      const { items, changed } = withOwners(loaded.map(upgradeSavedEvent), LEGACY_OWNER_ID);
-      this.eventsSignal.set(items);
-      if (changed) this.persist();
-    }
+  /** Resolves once the events of the signed-in account are loaded. */
+  ready(): Promise<void> {
+    return this.loader.ready();
   }
 
-  add(input: CalendarEventInput): CalendarEvent {
+  /** Resolves once every change made so far has been sent. */
+  settled(): Promise<void> {
+    return this.sync.settled();
+  }
+
+  /** A new event of the signed-in account; Monthly Report is Admin's, so for anyone else this is undefined. */
+  add(input: CalendarEventInput): CalendarEvent | undefined {
+    if (!canUseEvents(this.auth.user())) return undefined;
     const now = new Date().toISOString();
     const ownerId = this.auth.user()?.id;
     const event: CalendarEvent = {
@@ -62,7 +96,7 @@ export class EventService {
       updatedAt: now,
     };
     this.eventsSignal.update((list) => [...list, event]);
-    this.persist();
+    this.sync.save(event.id);
     return event;
   }
 
@@ -78,14 +112,14 @@ export class EventService {
         e.id === id ? { ...e, ...input, ownerId: event.ownerId, assigneeIds, updatedAt: new Date().toISOString() } : e,
       ),
     );
-    this.persist();
+    this.sync.save(id);
   }
 
   setDone(id: string, done: boolean): void {
     const event = this.find(id);
     if (!event || !canEdit(this.auth.user(), event)) return;
     this.eventsSignal.update((list) => list.map((e) => (e.id === id ? { ...e, done, updatedAt: new Date().toISOString() } : e)));
-    this.persist();
+    this.sync.save(id);
   }
 
   /** Only the owner and Admin may delete an event. */
@@ -93,7 +127,7 @@ export class EventService {
     const event = this.find(id);
     if (!event || !canDelete(this.auth.user(), event)) return;
     this.eventsSignal.update((list) => list.filter((e) => e.id !== id));
-    this.persist();
+    this.sync.delete(id);
   }
 
   private find(id: string): CalendarEvent | undefined {
@@ -102,9 +136,5 @@ export class EventService {
 
   private assignees(ids: string[] | undefined, ownerId: string | undefined): string[] | undefined {
     return cleanAssignees(ids, ownerId, (id) => this.users.getById(id)?.role === 'USER');
-  }
-
-  private persist(): void {
-    this.storage.set(STORAGE_KEY, this.eventsSignal());
   }
 }

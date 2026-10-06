@@ -13,8 +13,8 @@ export const ROLE_BADGE_CLASS: Record<Role, string> = {
   USER: 'bg-slate-100 text-slate-600 ring-1 ring-slate-200',
 };
 
-/** An account as UserStore keeps it, secrets included. */
-export interface StoredUser {
+/** An account as the API sends it (no password hash or sign-in counters). */
+export interface AppUser {
   id: string;
   /** Kept in lower case; sign-in ignores case. */
   username: string;
@@ -23,32 +23,13 @@ export interface StoredUser {
   active: boolean;
   /** Set on a new account and after a reset: the next sign-in must pick a new password first. */
   mustChangePassword: boolean;
-  /** `pbkdf2$<iterations>$<salt b64>$<hash b64>`, or `sha256$<hex of username:password>` for the seeded accounts. */
-  passwordHash: string;
-  failedLogins: number;
-  /** ISO time until which sign-in is refused after too many wrong passwords. */
-  lockedUntil: string | null;
-  /** Raised when the account is deactivated or its password reset, which ends every session made before. */
-  sessionVersion: number;
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-/** An account as the rest of the app sees it. */
-export type AppUser = Omit<StoredUser, 'passwordHash' | 'failedLogins' | 'lockedUntil'>;
-
-/** An account created when the store is empty (see SEED_USERS in auth.config.ts). */
-export interface SeedUser {
-  id: string;
-  username: string;
-  displayName: string;
-  role: Role;
-  passwordHash: string;
-  mustChangePassword: boolean;
-  /** The password itself, only for the develop accounts, so the login page can list them. */
-  devPassword?: string;
-}
+/** What every signed-in account may know about another: enough to show its name and pick it as responsible. */
+export type DirectoryUser = Pick<AppUser, 'id' | 'displayName' | 'role' | 'active'>;
 
 export type AuthErrorCode =
   | 'INVALID'
@@ -62,9 +43,16 @@ export type AuthErrorCode =
   | 'LAST_SUPER_ADMIN'
   | 'WRONG_PASSWORD'
   | 'WEAK_PASSWORD'
-  | 'SAME_PASSWORD';
+  | 'SAME_PASSWORD'
+  // From the API itself rather than a rule about accounts:
+  | 'UNAUTHENTICATED'
+  | 'PASSWORD_CHANGE_REQUIRED'
+  | 'CONFLICT'
+  | 'BAD_REQUEST'
+  | 'SERVER_ERROR'
+  | 'NETWORK';
 
-/** Why a UserStore call was refused; `lockedUntil` comes with LOCKED. */
+/** Why an API call was refused (the `code` of its error body); `lockedUntil` comes with LOCKED. */
 export class AuthError extends Error {
   constructor(
     readonly code: AuthErrorCode,
@@ -106,5 +94,17 @@ export function authErrorMessage(error: unknown): string {
       return 'รหัสผ่านใหม่ต้องยาวอย่างน้อย 8 ตัวอักษร';
     case 'SAME_PASSWORD':
       return 'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม';
+    case 'UNAUTHENTICATED':
+      return 'กรุณาเข้าสู่ระบบอีกครั้ง';
+    case 'PASSWORD_CHANGE_REQUIRED':
+      return 'กรุณาเปลี่ยนรหัสผ่านก่อนใช้งาน';
+    case 'CONFLICT':
+      return 'มีคนแก้ไขข้อมูลนี้ก่อนหน้า ระบบโหลดข้อมูลล่าสุดให้แล้ว กรุณาทำรายการอีกครั้ง';
+    case 'BAD_REQUEST':
+      return 'ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่';
+    case 'SERVER_ERROR':
+      return 'เซิร์ฟเวอร์ขัดข้อง กรุณาลองใหม่อีกครั้ง';
+    case 'NETWORK':
+      return 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่';
   }
 }

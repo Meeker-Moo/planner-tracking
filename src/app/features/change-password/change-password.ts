@@ -3,6 +3,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthService, safeReturnUrl } from '../../core/auth/auth.service';
 import { MIN_PASSWORD_LENGTH } from '../../core/auth/password.util';
 import { authErrorMessage } from '../../core/auth/user.model';
+import { SessionData } from '../../core/services/session-data.service';
 
 /**
  * The signed-in account's own password change: required after a new account or a reset (the one-time
@@ -110,6 +111,7 @@ import { authErrorMessage } from '../../core/auth/user.model';
 export class ChangePassword {
   readonly auth = inject(AuthService);
   private readonly router = inject(Router);
+  private readonly data = inject(SessionData);
   private readonly returnUrl = inject(ActivatedRoute).snapshot.queryParamMap.get('returnUrl');
 
   readonly minLength = MIN_PASSWORD_LENGTH;
@@ -134,6 +136,7 @@ export class ChangePassword {
     this.busy.set(true);
     try {
       await this.auth.changePassword(this.current(), this.next());
+      await this.data.ready();
       alert('เปลี่ยนรหัสผ่านเรียบร้อยแล้ว');
       await this.router.navigateByUrl(this.backUrl());
     } catch (err) {

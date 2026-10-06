@@ -7,7 +7,7 @@
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
-    "api": "wrangler dev",
+    "api": "node -e \"require('fs').mkdirSync('dist/annual-work-planning/browser',{recursive:true})\" && wrangler dev",
     "db:migrate:local": "wrangler d1 migrations apply moph-planner-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply moph-planner-db --remote",
     "db:seed:local": "wrangler d1 execute moph-planner-db --local --file server/seed-dev.sql",

@@ -1,4 +1,4 @@
-import { Role } from '../src/app/core/auth/user.model';
+import { AppUser, DirectoryUser, Role } from '../src/app/core/auth/user.model';
 
 /** A `users` row as D1 returns it. */
 export interface UserRow {
@@ -17,19 +17,7 @@ export interface UserRow {
 }
 
 /** An account as the API sends it: no password hash or sign-in counters. */
-export interface ApiUser {
-  id: string;
-  username: string;
-  displayName: string;
-  role: Role;
-  active: boolean;
-  mustChangePassword: boolean;
-  createdBy: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export function toApiUser(row: UserRow): ApiUser {
+export function toApiUser(row: UserRow): AppUser {
   return {
     id: row.id,
     username: row.username,
@@ -43,15 +31,7 @@ export function toApiUser(row: UserRow): ApiUser {
   };
 }
 
-/** What everyone signed in may know about an account: enough to show its name and pick it as responsible. */
-export interface DirectoryEntry {
-  id: string;
-  displayName: string;
-  role: Role;
-  active: boolean;
-}
-
-export type Directory = Map<string, DirectoryEntry>;
+export type Directory = Map<string, DirectoryUser>;
 
 export async function loadDirectory(db: D1Database): Promise<Directory> {
   const { results } = await db

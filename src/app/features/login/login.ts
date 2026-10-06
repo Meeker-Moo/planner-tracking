@@ -1,7 +1,8 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthService, homeUrlFor, safeReturnUrl } from '../../core/auth/auth.service';
-import { SEED_USERS } from '../../core/auth/auth.config';
+import { DEV_ACCOUNTS } from '../../core/auth/auth.config';
+import { SessionData } from '../../core/services/session-data.service';
 import { ROLE_BADGE_CLASS, ROLE_LABELS, authErrorMessage } from '../../core/auth/user.model';
 
 /**
@@ -104,11 +105,11 @@ import { ROLE_BADGE_CLASS, ROLE_LABELS, authErrorMessage } from '../../core/auth
                 <button
                   type="button"
                   class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-sm hover:bg-white"
-                  (click)="fill(a.username, a.devPassword!)"
+                  (click)="fill(a.username, a.password)"
                 >
                   <span class="rounded-md px-1.5 py-0.5 text-[11px] font-bold" [class]="roleBadge[a.role]">{{ roleLabels[a.role] }}</span>
                   <span class="font-semibold text-slate-800">{{ a.username }}</span>
-                  <span class="text-slate-400">/ {{ a.devPassword }}</span>
+                  <span class="text-slate-400">/ {{ a.password }}</span>
                 </button>
               }
             </div>
@@ -123,6 +124,7 @@ import { ROLE_BADGE_CLASS, ROLE_LABELS, authErrorMessage } from '../../core/auth
 export class Login {
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
+  private readonly data = inject(SessionData);
   private readonly returnUrl = inject(ActivatedRoute).snapshot.queryParamMap.get('returnUrl');
 
   username = signal('');
@@ -133,7 +135,7 @@ export class Login {
   error = signal('');
 
   /** The develop environment's test accounts (none in production). */
-  readonly devAccounts = inject(SEED_USERS).filter((a) => a.devPassword);
+  readonly devAccounts = DEV_ACCOUNTS;
   readonly roleLabels = ROLE_LABELS;
   readonly roleBadge = ROLE_BADGE_CLASS;
 
@@ -155,13 +157,14 @@ export class Login {
     try {
       const result = await this.auth.login(this.username(), this.password(), this.remember());
       if (result.ok) {
+        await this.data.ready();
         await this.router.navigateByUrl(safeReturnUrl(this.returnUrl, homeUrlFor(result.user)));
       } else {
         this.error.set(authErrorMessage(result.error));
         this.password.set('');
       }
-    } catch {
-      this.error.set('เข้าสู่ระบบไม่ได้ในเบราว์เซอร์นี้ (ต้องเปิดผ่าน https หรือ localhost)');
+    } catch (err) {
+      this.error.set(authErrorMessage(err));
     } finally {
       this.busy.set(false);
     }
